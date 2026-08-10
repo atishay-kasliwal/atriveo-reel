@@ -1,0 +1,49 @@
+# Docker is provided for development and for Linux hosts.
+#
+# On macOS, containers run inside a Linux VM with no access to VideoToolbox,
+# the Mac's hardware video encoder. A containerised worker there would fall
+# back to software encoding and be several times slower, which is why the
+# production deployment on the Mac Mini runs natively (see docs/DEPLOYMENT.md).
+#
+# On a Linux host this compose file runs the whole stack; set
+# VIDEO_ENCODER=libx264 since VideoToolbox is macOS-only.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run start
+    ports:
+      # Bound to loopback: reach it through the tunnel, not the LAN.
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      APP_PORT: 3000
+      APP_HOSTNAME: 0.0.0.0
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      DATA_DIR: /data
+      VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
+      VIDEO_QUALITY: ${VIDEO_QUALITY:-20}
+    volumes:
+      - reels-data:/data
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run worker
+    environment:
+      DATA_DIR: /data
+      VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
+      VIDEO_QUALITY: ${VIDEO_QUALITY:-20}
+      MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-1}
+    volumes:
+      # Same volume as the web service: they share SQLite and the media files.
+      - reels-data:/data
+    restart: unless-stopped
+    # No ports. The worker must never be reachable from outside.
+
+volumes:
+  reels-data:
