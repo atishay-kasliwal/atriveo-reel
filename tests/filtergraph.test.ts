@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fitFilter, slotGeometry } from "../src/lib/renderer/filtergraph";
+import {
+  buildTurnsGraph,
+  fitFilter,
+  slotGeometry,
+  type ClipInput,
+} from "../src/lib/renderer/filtergraph";
 import {
   parseTimecode,
   formatTimecode,
@@ -66,6 +71,50 @@ test("split layout panes are even-dimensioned and account for the gutter", () =>
   assert.equal(sideBySide.a.h, 1920);
 
   assert.equal(slotGeometry(doc({ layout: "sequential" })), null);
+});
+
+test("take-turns holds each pane still while the other plays", () => {
+  const turnsDoc = reelDocumentSchema.parse({
+    layout: "top-bottom-turns",
+    gutter: 6,
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "video", sourceId: "b", start: 0, end: 4, slot: "b" },
+    ],
+  });
+
+  const clip = (id: string, end: number, hasAudio: boolean): ClipInput => ({
+    path: `/tmp/${id}.mp4`,
+    element: turnsDoc.elements.find(
+      (e) => e.type === "video" && e.sourceId === id,
+    ) as ClipInput["element"],
+    sourceDuration: 300,
+    hasAudio,
+  });
+
+  const graph = buildTurnsGraph(
+    turnsDoc,
+    clip("a", 10, true),
+    clip("b", 4, true),
+  );
+  const filters = graph.args[graph.args.indexOf("-filter_complex") + 1];
+
+  // The reel runs for both clips back to back, not the longer of the two.
+  assert.equal(graph.durationSeconds, 14);
+
+  // A plays first, so it pads its tail for exactly B's length.
+  assert.match(filters, /tpad=stop_mode=clone:stop_duration=4\.000/);
+  // B waits through A, so it pads its head for exactly A's length.
+  assert.match(filters, /tpad=start_mode=clone:start_duration=10\.000/);
+
+  // Audio plays in turn rather than mixing, or the waiting pane would be heard.
+  assert.match(filters, /concat=n=2:v=0:a=1/);
+  assert.ok(!filters.includes("amix"));
+
+  // Pane B sits below pane A, offset by the pane height plus the gutter.
+  const geometry = slotGeometry(turnsDoc);
+  assert.ok(geometry);
+  assert.match(filters, new RegExp(`overlay=0:${geometry.a.h + 6}`));
 });
 
 test("sequential duration sums; split duration takes the longer pane", () => {

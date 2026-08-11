@@ -17,7 +17,23 @@ export const formatSchema = z.object({
   fps: z.number().int().positive().max(60).default(OUTPUT_FPS),
 });
 
-export const layoutSchema = z.enum(["sequential", "top-bottom", "side-by-side"]);
+/**
+ * "top-bottom-turns" keeps both panes on screen like `top-bottom`, but the
+ * clips play one after the other instead of together: while one plays, the
+ * other holds a still frame. It is a split layout geometrically and a
+ * sequential one temporally.
+ */
+export const layoutSchema = z.enum([
+  "sequential",
+  "top-bottom",
+  "top-bottom-turns",
+  "side-by-side",
+]);
+
+/** Layouts that composite both clips into one frame. */
+export function isSplitLayout(layout: Layout): boolean {
+  return layout !== "sequential";
+}
 
 /**
  * How a source frame is fitted into its slot when the aspect ratios differ.
@@ -117,7 +133,7 @@ export const reelDocumentSchema = z
     // The split layouts composite exactly one clip per pane. More than one
     // clip per slot has no defined meaning, so reject it here rather than
     // letting the renderer silently drop clips.
-    if (doc.layout === "top-bottom" || doc.layout === "side-by-side") {
+    if (isSplitLayout(doc.layout)) {
       const slotA = videos.filter((v) => v.slot === "a").length;
       const slotB = videos.filter((v) => v.slot === "b").length;
 
@@ -151,9 +167,10 @@ export type ReelElementInput = z.input<typeof elementSchema>;
 /**
  * Total duration of the finished reel in seconds.
  *
- * In sequential layout every element plays one after another. In the split
- * layouts the two clips play together, so the pair contributes the longer of
- * the two rather than their sum.
+ * Clips contribute their sum when they play one after another, and the longer
+ * of the two when they play together. "top-bottom-turns" shows both panes at
+ * once but plays them in turn, so it sums like a sequential reel even though
+ * it composites like a split one.
  */
 export function reelDuration(doc: ReelDocument): number {
   const nonVideo = doc.elements
@@ -164,7 +181,7 @@ export function reelDuration(doc: ReelDocument): number {
     (e): e is VideoElement => e.type === "video",
   );
 
-  if (doc.layout === "sequential") {
+  if (doc.layout === "sequential" || doc.layout === "top-bottom-turns") {
     const videoTime = videos.reduce((total, v) => total + (v.end - v.start), 0);
     return videoTime + nonVideo;
   }

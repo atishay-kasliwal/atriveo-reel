@@ -66,7 +66,7 @@ export function slotGeometry(
   const { width, height } = doc.format;
   const gutter = doc.gutter;
 
-  if (doc.layout === "top-bottom") {
+  if (doc.layout === "top-bottom" || doc.layout === "top-bottom-turns") {
     // Split the gutter out of the total height, then halve. Rounding to even
     // keeps both panes yuv420p-safe.
     const paneHeight = evenDown((height - gutter) / 2);
@@ -136,7 +136,8 @@ export function buildSplitGraph(
     filters.push(`[${index}:v]${steps.join(",")}[v${label}]`);
   }
 
-  const isVertical = doc.layout === "top-bottom";
+  const isVertical =
+    doc.layout === "top-bottom" || doc.layout === "top-bottom-turns";
   const offsetB = isVertical
     ? `0:${geometry.a.h + doc.gutter}`
     : `${geometry.a.w + doc.gutter}:0`;
@@ -157,6 +158,118 @@ export function buildSplitGraph(
     ],
     durationSeconds: duration,
   };
+}
+
+/**
+ * Builds the graph for "top-bottom-turns": both panes stay on screen, but the
+ * clips play in turn rather than together.
+ *
+ * Each pane is the clip preceded or followed by a held still, so the pane is
+ * never blank:
+ *
+ *   pane A = [ clip A plays ][ A holds its last frame ]
+ *   pane B = [ B holds its first frame ][ clip B plays ]
+ *
+ * `tpad` supplies both holds — `stop_mode=clone` extends the tail with the
+ * final frame, `start_mode=clone` extends the head with the first one. The
+ * result is two streams of identical length that composite exactly like the
+ * simultaneous layout, so pane placement is unchanged.
+ *
+ * Audio is concatenated rather than mixed: only the playing clip should be
+ * audible, or the waiting pane's soundtrack would bleed over its neighbour.
+ */
+export function buildTurnsGraph(
+  doc: ReelDocument,
+  clipA: ClipInput,
+  clipB: ClipInput,
+): GraphResult {
+  const geometry = slotGeometry(doc);
+  if (!geometry) throw new Error(`buildTurnsGraph called for layout: ${doc.layout}`);
+
+  const { width, height, fps } = doc.format;
+  const durationA = clipA.element.end - clipA.element.start;
+  const durationB = clipB.element.end - clipB.element.start;
+  // The panes take turns, so the reel runs for both clips back to back.
+  const duration = durationA + durationB;
+  const background = doc.backgroundColor.replace("#", "0x");
+
+  const filters: string[] = [];
+
+  filters.push(
+    `color=c=${background}:s=${width}x${height}:r=${fps}:d=${duration.toFixed(3)}[canvas]`,
+  );
+
+  // Pane A: plays first, then freezes on its final frame for B's turn.
+  filters.push(
+    `[0:v]fps=${fps},${fitFilter(geometry.a.w, geometry.a.h, clipA.element.fit, doc.backgroundColor)},` +
+      `tpad=stop_mode=clone:stop_duration=${durationB.toFixed(3)},` +
+      `setpts=PTS-STARTPTS[va]`,
+  );
+
+  // Pane B: holds its opening frame through A's turn, then plays.
+  filters.push(
+    `[1:v]fps=${fps},${fitFilter(geometry.b.w, geometry.b.h, clipB.element.fit, doc.backgroundColor)},` +
+      `tpad=start_mode=clone:start_duration=${durationA.toFixed(3)},` +
+      `setpts=PTS-STARTPTS[vb]`,
+  );
+
+  const offsetB = `0:${geometry.a.h + doc.gutter}`;
+  filters.push(`[canvas][va]overlay=0:0:shortest=0[stage1]`);
+  filters.push(`[stage1][vb]overlay=${offsetB}[vout]`);
+
+  const audio = buildTurnsAudio(clipA, clipB, durationA, durationB);
+  filters.push(...audio.filters);
+
+  return {
+    args: [
+      "-filter_complex",
+      filters.join(";"),
+      "-map", "[vout]",
+      "-map", audio.outputLabel,
+      "-t", duration.toFixed(3),
+    ],
+    durationSeconds: duration,
+  };
+}
+
+/**
+ * Audio for the take-turns layout: A's sound, then B's, joined end to end.
+ *
+ * A silent stretch stands in for a clip with no audio, so the two halves stay
+ * aligned with their video no matter which sources carry sound.
+ */
+function buildTurnsAudio(
+  clipA: ClipInput,
+  clipB: ClipInput,
+  durationA: number,
+  durationB: number,
+): { filters: string[]; outputLabel: string } {
+  const filters: string[] = [];
+
+  const half = (
+    clip: ClipInput,
+    index: number,
+    duration: number,
+    label: string,
+  ) => {
+    if (clip.hasAudio && !clip.element.muted) {
+      filters.push(
+        `[${index}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+          `apad,atrim=0:${duration.toFixed(3)},asetpts=PTS-STARTPTS[${label}]`,
+      );
+    } else {
+      filters.push(
+        `anullsrc=channel_layout=stereo:sample_rate=48000,` +
+          `atrim=0:${duration.toFixed(3)},asetpts=PTS-STARTPTS[${label}]`,
+      );
+    }
+  };
+
+  half(clipA, 0, durationA, "atA");
+  half(clipB, 1, durationB, "atB");
+
+  filters.push(`[atA][atB]concat=n=2:v=0:a=1[aout]`);
+  return { filters, outputLabel: "[aout]" };
 }
 
 /**

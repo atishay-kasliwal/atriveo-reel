@@ -16,6 +16,7 @@ import {
   buildSegmentArgs,
   buildSplitGraph,
   buildTextCardArgs,
+  buildTurnsGraph,
   encoderArgs,
   type ClipInput,
 } from "./filtergraph";
@@ -263,7 +264,12 @@ async function renderSplit(
   const clipB = clips.get(elementB);
   if (!clipA || !clipB) throw new AppError("RENDER_FAILED", "Split layout clips unresolved");
 
-  const graph = buildSplitGraph(document, clipA, clipB);
+  // Both layouts composite two panes; they differ only in whether the clips
+  // run together or in turn, which is entirely a filter-graph concern.
+  const graph =
+    document.layout === "top-bottom-turns"
+      ? buildTurnsGraph(document, clipA, clipB)
+      : buildSplitGraph(document, clipA, clipB);
   const encoder = encoderArgs(config.render.encoder, config.render.quality);
 
   const compositePath = path.join(workDir, "composite.mp4");
