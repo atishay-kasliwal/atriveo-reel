@@ -394,8 +394,12 @@ export function Editor() {
                 <MediaPanel
                   sourceA={state.sourceA}
                   sourceB={state.sourceB}
-                  onChangeA={(source) => update({ sourceA: source })}
-                  onChangeB={(source) => update({ sourceB: source })}
+                  onChangeA={(source) =>
+                    update({ sourceA: source, clipA: clipFor(source) })
+                  }
+                  onChangeB={(source) =>
+                    update({ sourceB: source, clipB: clipFor(source) })
+                  }
                 />
               </Panel>
 
@@ -412,7 +416,13 @@ export function Editor() {
               >
                 {bothSources ? (
                   <div className="space-y-2">
+                    {/*
+                      Keyed by source: TrimRow seeds its duration, playhead and
+                      player from props on first render only, so a replaced
+                      video would otherwise keep the previous one's timeline.
+                    */}
                     <TrimRow
+                      key={state.sourceA!.id}
                       slot="A"
                       source={state.sourceA!}
                       start={state.clipA.start}
@@ -420,6 +430,7 @@ export function Editor() {
                       onChange={(clipA) => update({ clipA })}
                     />
                     <TrimRow
+                      key={state.sourceB!.id}
                       slot="B"
                       source={state.sourceB!}
                       start={state.clipB.start}
@@ -482,6 +493,21 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
       {children}
     </p>
   );
+}
+
+/**
+ * A fresh clip selection for a newly chosen source.
+ *
+ * Swapping a video has to discard the previous clip times: they refer to a
+ * different timeline, and a 2:07 selection carried onto a 30-second video
+ * points past its end — which the render would only reject after the user
+ * pressed Create. The default window is trimmed to fit a source shorter than
+ * it, and a cleared slot returns to the initial selection.
+ */
+function clipFor(source: MediaSource | null): Selection {
+  const fallback = INITIAL_STATE.clipA;
+  if (!source?.duration) return fallback;
+  return { start: 0, end: Math.min(fallback.end, source.duration) };
 }
 
 /**

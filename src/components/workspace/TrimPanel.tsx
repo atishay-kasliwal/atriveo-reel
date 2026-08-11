@@ -99,18 +99,64 @@ export function TrimRow({
     return () => clearInterval(timer);
   }, [playing, isYouTube]);
 
+  /**
+   * Moves the clip's start.
+   *
+   * A start beyond the current end used to collapse to `end - 0.5s`, silently
+   * discarding the typed value: with a default 0–10s clip, asking for 2:07
+   * landed on 9.5s. Instead the window slides — the clip keeps its length and
+   * moves to the new position — which is what dragging the selection would do
+   * and what the user meant.
+   */
   const setStart = (value: number) => {
-    const clamped = Math.max(0, Math.min(value, end - MIN_CLIP_SECONDS));
-    onChange({ start: clamped, end });
+    const ceiling = duration || value + MIN_CLIP_SECONDS;
+    const nextStart = Math.max(
+      0,
+      Math.min(value, Math.max(0, ceiling - MIN_CLIP_SECONDS)),
+    );
+
+    if (nextStart < end - MIN_CLIP_SECONDS) {
+      // Still a valid window; only the near edge moved.
+      onChange({ start: nextStart, end });
+      return;
+    }
+
+    // Carry the clip along at the length it had before the start moved, so a
+    // 10s selection stays 10s rather than collapsing to the minimum.
+    const previousLength = Math.min(
+      Math.max(end - start, MIN_CLIP_SECONDS),
+      MAX_CLIP_SECONDS,
+    );
+    onChange({
+      start: nextStart,
+      end: Math.min(nextStart + previousLength, ceiling),
+    });
   };
 
+  /**
+   * Moves the clip's end.
+   *
+   * The mirror of `setStart`: an end typed before the current start pulls the
+   * start back with it rather than snapping to `start + 0.5s`, so the typed
+   * timestamp is always the one that survives.
+   */
   const setEnd = (value: number) => {
     const ceiling = duration || value;
-    const clamped = Math.min(
-      Math.max(value, start + MIN_CLIP_SECONDS),
-      Math.min(ceiling, start + MAX_CLIP_SECONDS),
+    const nextEnd = Math.max(MIN_CLIP_SECONDS, Math.min(value, ceiling));
+
+    if (nextEnd > start + MIN_CLIP_SECONDS) {
+      onChange({
+        start,
+        end: Math.min(nextEnd, start + MAX_CLIP_SECONDS),
+      });
+      return;
+    }
+
+    const previousLength = Math.min(
+      Math.max(end - start, MIN_CLIP_SECONDS),
+      MAX_CLIP_SECONDS,
     );
-    onChange({ start, end: clamped });
+    onChange({ start: Math.max(0, nextEnd - previousLength), end: nextEnd });
   };
 
   const clipLength = end - start;
