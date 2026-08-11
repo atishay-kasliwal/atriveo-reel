@@ -38,9 +38,18 @@ export async function GET(
 
       const send = (event: string, data: unknown) => {
         if (closed) return;
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          // The client can vanish between the `closed` check and this enqueue
+          // (a closed tab, a dropped connection, the tunnel reconnecting), which
+          // makes the controller invalid. This runs inside a setInterval, so an
+          // escaping throw becomes an uncaughtException and takes down the
+          // server. Treat it as a disconnect and stop polling.
+          close();
+        }
       };
 
       const close = () => {

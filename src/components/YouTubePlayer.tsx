@@ -29,27 +29,58 @@ type PlayerState = "playing" | "paused" | "ended" | "buffering" | "unstarted";
 
 let apiPromise: Promise<void> | null = null;
 
+/**
+ * Resolves once `YT.Player` is actually constructible.
+ *
+ * `iframe_api` is only a bootstrap: it defines `window.YT` as `{loading, loaded}`
+ * straight away and then loads the real widget script asynchronously. So
+ * `window.YT` being truthy proves nothing — only `YT.Player` does. The
+ * `onYouTubeIframeAPIReady` callback also fires just once per page, and is
+ * missed entirely by anything that starts listening after the API has landed,
+ * so we poll for the constructor instead of relying solely on it.
+ */
 function loadYouTubeApi(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
+  if (window.YT?.Player) return Promise.resolve();
 
-  apiPromise ??= new Promise<void>((resolve) => {
-    if (window.YT?.Player) {
-      resolve();
-      return;
-    }
+  apiPromise ??= new Promise<void>((resolve, reject) => {
+    const started = Date.now();
 
-    // YouTube calls this global once the API is ready. Chain onto any
-    // existing handler rather than replacing it.
+    const poll = window.setInterval(() => {
+      if (window.YT?.Player) {
+        window.clearInterval(poll);
+        resolve();
+        return;
+      }
+      // Blocked script, offline, or an extension eating the request. Fail so
+      // the caller can show the fallback rather than spinning forever.
+      if (Date.now() - started > 15_000) {
+        window.clearInterval(poll);
+        // Allow a later mount to retry from scratch.
+        apiPromise = null;
+        reject(new Error("YouTube IFrame API did not become ready"));
+      }
+    }, 100);
+
+    // Chain onto any existing handler rather than replacing it.
     const previous = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       previous?.();
-      resolve();
+      if (window.YT?.Player) {
+        window.clearInterval(poll);
+        resolve();
+      }
     };
 
     if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
       const script = document.createElement("script");
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
+      script.onerror = () => {
+        window.clearInterval(poll);
+        apiPromise = null;
+        reject(new Error("Failed to load the YouTube IFrame API"));
+      };
       document.head.appendChild(script);
     }
   });
@@ -86,49 +117,78 @@ export const YouTubePlayer = forwardRef<
 
   useEffect(() => {
     let cancelled = false;
+    // A previous videoId may have failed; give this one a clean slate.
+    setFailed(false);
+    // YouTube replaces the element it is handed with an <iframe>. Handing it a
+    // node React rendered would leave React with a stale child reference and a
+    // NotFoundError from removeChild on unmount, which surfaces as a
+    // client-side exception. So we mount into a detached node that React never
+    // tracks and remove it ourselves during cleanup.
+    const host = document.createElement("div");
+    host.className = "h-full w-full";
+    containerRef.current?.appendChild(host);
 
-    void loadYouTubeApi().then(() => {
-      // The API can fail to load entirely if the script is blocked; without
-      // it there is no player to construct.
-      if (cancelled || !containerRef.current || !window.YT?.Player) {
+    void loadYouTubeApi().then(
+      () => {
+        if (cancelled || !host.isConnected || !window.YT?.Player) {
+          if (!cancelled) setFailed(true);
+          return;
+        }
+
+        playerRef.current = new window.YT.Player(host, {
+          videoId,
+          playerVars: {
+            // Hide as much YouTube chrome as the embed allows; the app supplies
+            // its own transport controls.
+            controls: 0,
+            modestbranding: 1,
+            rel: 0,
+            playsinline: 1,
+            disablekb: 1,
+          },
+          events: {
+            onReady: (event) => {
+              if (!cancelled) onReadyRef.current?.(event.target.getDuration());
+            },
+            onStateChange: (event) => {
+              if (cancelled) return;
+              const states: Record<number, PlayerState> = {
+                [-1]: "unstarted",
+                0: "ended",
+                1: "playing",
+                2: "paused",
+                3: "buffering",
+              };
+              onStateChangeRef.current?.(states[event.data] ?? "paused");
+            },
+            onError: () => {
+              if (!cancelled) setFailed(true);
+            },
+          },
+        });
+      },
+      // The API never became ready (blocked script, offline, extension).
+      () => {
         if (!cancelled) setFailed(true);
-        return;
-      }
-
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        videoId,
-        playerVars: {
-          // Hide as much YouTube chrome as the embed allows; the app supplies
-          // its own transport controls.
-          controls: 0,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          disablekb: 1,
-        },
-        events: {
-          onReady: (event) => {
-            if (!cancelled) onReadyRef.current?.(event.target.getDuration());
-          },
-          onStateChange: (event) => {
-            const states: Record<number, PlayerState> = {
-              [-1]: "unstarted",
-              0: "ended",
-              1: "playing",
-              2: "paused",
-              3: "buffering",
-            };
-            onStateChangeRef.current?.(states[event.data] ?? "paused");
-          },
-          onError: () => setFailed(true),
-        },
-      });
-    });
+      },
+    );
 
     return () => {
       cancelled = true;
-      playerRef.current?.destroy();
+
+      // Tear the player down before detaching, so YouTube's own listeners and
+      // timers stop. Teardown races the DOM in ways we don't control, and a
+      // failure here must never propagate into React's unmount path.
+      try {
+        playerRef.current?.destroy();
+      } catch {
+        // Ignored: the node is being discarded regardless.
+      }
       playerRef.current = null;
+
+      // Remove whatever YouTube left behind. This is our own node, so React's
+      // subsequent unmount of containerRef is unaffected either way.
+      host.remove();
     };
   }, [videoId]);
 
