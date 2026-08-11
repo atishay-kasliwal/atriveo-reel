@@ -35,7 +35,21 @@ export function middleware(request: NextRequest) {
     );
   }
 
+  // Behind the tunnel, request.url carries the internal origin
+  // (127.0.0.1:3001), so redirecting to it would send a remote visitor to
+  // their own machine. The forwarded headers carry the public origin.
+  const forwardedHost = request.headers.get("x-forwarded-host");
   const loginUrl = new URL("/login", request.url);
+  if (forwardedHost) {
+    loginUrl.protocol = request.headers.get("x-forwarded-proto") ?? "https";
+    // Setting `host` carries the port when the header has one (local dev sends
+    // "127.0.0.1:3001") and drops it when it doesn't (the tunnel sends a bare
+    // hostname served on the default port). Clearing the port first stops the
+    // internal :3001 surviving into a public redirect.
+    loginUrl.port = "";
+    loginUrl.host = forwardedHost;
+  }
+
   // Preserve where they were headed so login can return them there.
   if (pathname !== "/") loginUrl.searchParams.set("next", pathname);
   return NextResponse.redirect(loginUrl);
