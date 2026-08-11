@@ -44,10 +44,20 @@ export function PreviewStage({
         <span className="text-[11px] tabular-nums text-ink-400">9:16</span>
       </div>
 
+      {/*
+        Height-capped, not width-capped. The canvas is bounded by the space
+        left in the viewport after the sticky offset and the rows beneath it,
+        so width follows from the 9:16 ratio rather than pushing the column
+        past the fold on a laptop. `mx-auto` keeps it centred once the height
+        cap makes it narrower than the column.
+      */}
       <div
-        className="relative w-full overflow-hidden rounded-panel border
+        className="relative mx-auto w-full overflow-hidden rounded-panel border
                    border-ink-800 bg-ink-975 shadow-stage"
-        style={{ aspectRatio: "9 / 16" }}
+        style={{
+          aspectRatio: "9 / 16",
+          maxHeight: "var(--preview-max-h, none)",
+        }}
       >
         {!ready ? (
           <EmptyStage />

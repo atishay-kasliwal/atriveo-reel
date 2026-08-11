@@ -123,6 +123,23 @@
 }
 
 @layer utilities {
+  /*
+   * Ceiling for the 9:16 preview canvas.
+   *
+   * The sticky column must fit the viewport, so the canvas is capped by the
+   * height left after the header, the sticky offset and the rows beneath it
+   * (timeline, metadata, primary action) — roughly 260px. Width then follows
+   * from the aspect ratio. Unset below `lg`, where the preview is a tab and
+   * scrolls normally.
+   */
+  @media (min-width: 1024px) {
+    .preview-column {
+      --preview-max-h: calc(100dvh - 20rem);
+      /* The completed state stacks metadata plus two actions beneath it. */
+      --preview-max-h-complete: calc(100dvh - 23rem);
+    }
+  }
+
   /* Skeletons: a single shimmer definition so loading states stay consistent. */
   .skeleton {
     @apply relative overflow-hidden bg-ink-800/70;

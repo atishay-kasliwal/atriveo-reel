@@ -2,11 +2,13 @@
 
 import type { Layout } from "@/lib/shared/reel";
 
+// Take turns leads: it is the default, and the arrangement this format is
+// most often cut for.
 const OPTIONS: { value: Layout; title: string; description: string }[] = [
   {
-    value: "sequential",
-    title: "Sequential",
-    description: "Full frame. A plays, then B.",
+    value: "top-bottom-turns",
+    title: "Take turns",
+    description: "Stacked. A plays while B holds.",
   },
   {
     value: "top-bottom",
@@ -14,9 +16,9 @@ const OPTIONS: { value: Layout; title: string; description: string }[] = [
     description: "Stacked. Both play at once.",
   },
   {
-    value: "top-bottom-turns",
-    title: "Take turns",
-    description: "Stacked. A plays while B holds.",
+    value: "sequential",
+    title: "Sequential",
+    description: "Full frame. A plays, then B.",
   },
   {
     value: "side-by-side",

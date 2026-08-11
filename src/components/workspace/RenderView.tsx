@@ -293,8 +293,13 @@ export function CompletePanel({
         controls
         playsInline
         preload="metadata"
-        className="w-full rounded-panel border border-ink-800 bg-black shadow-stage"
-        style={{ aspectRatio: "9 / 16" }}
+        className="mx-auto w-full rounded-panel border border-ink-800 bg-black shadow-stage"
+        // The completed panel carries more below the canvas (metadata plus two
+        // actions), so it caps slightly tighter than the editing preview.
+        style={{
+          aspectRatio: "9 / 16",
+          maxHeight: "var(--preview-max-h-complete, var(--preview-max-h, none))",
+        }}
       />
 
       <dl className="grid grid-cols-3 gap-x-3 gap-y-1 rounded-control border border-ink-800 bg-ink-900 px-3 py-2">
@@ -380,9 +385,11 @@ export function RenderErrorPanel({
 function PreviewFrame({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="relative w-full overflow-hidden rounded-panel border border-ink-800
-                 bg-ink-975 shadow-stage"
-      style={{ aspectRatio: "9 / 16" }}
+      className="relative mx-auto w-full overflow-hidden rounded-panel border
+                 border-ink-800 bg-ink-975 shadow-stage"
+      // Same ceiling as the editing preview, so switching states never
+      // resizes the canvas.
+      style={{ aspectRatio: "9 / 16", maxHeight: "var(--preview-max-h, none)" }}
     >
       {children}
     </div>

@@ -70,7 +70,9 @@ const INITIAL_STATE: EditorState = {
   // render fast, and the most common length for this format.
   clipA: { start: 0, end: 10 },
   clipB: { start: 0, end: 10 },
-  layout: "sequential",
+  // Both panes on screen, playing in turn: the arrangement this format is
+  // usually cut for, so it is the one a new reel starts from.
+  layout: "top-bottom-turns",
   pauseDuration: 0,
   texts: {
     intro: emptyTextCard(),
@@ -449,10 +451,17 @@ export function Editor() {
           </div>
 
           {/* Preview: sticky beside the controls on desktop. */}
+          {/*
+            The column scrolls internally if it ever exceeds the viewport, so a
+            short window can still reach the primary action rather than
+            clipping it below the fold.
+          */}
           <aside
-            className={`mt-5 space-y-3 lg:sticky lg:top-[4.25rem] lg:mt-0 ${
-              mobileTab === "preview" ? "" : "hidden lg:block"
-            }`}
+            className={`preview-column mt-5 space-y-3 lg:sticky lg:top-[4.25rem]
+                        lg:mt-0 lg:max-h-[calc(100dvh-5.25rem)] lg:overflow-y-auto
+                        lg:pb-1 ${
+                          mobileTab === "preview" ? "" : "hidden lg:block"
+                        }`}
           >
             {previewPane}
           </aside>
