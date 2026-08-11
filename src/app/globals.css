@@ -27,27 +27,127 @@
 
 @layer components {
   .field {
-    @apply w-full rounded-xl border border-ink-700 bg-ink-900 px-4 py-3.5
-           text-ink-100 placeholder:text-ink-400
-           transition-colors focus:border-accent;
+    @apply w-full rounded-control border border-ink-700 bg-ink-950/80 px-3.5 py-2.5
+           text-[15px] text-ink-100 placeholder:text-ink-500
+           transition-colors duration-fast hover:border-ink-600
+           focus:border-accent;
+  }
+
+  /* Validation sits next to the field, so the field itself carries the state. */
+  .field[aria-invalid="true"] {
+    @apply border-red-500/70;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3
-           font-medium transition-colors disabled:cursor-not-allowed
-           disabled:opacity-40;
+    @apply inline-flex select-none items-center justify-center gap-2
+           rounded-control px-4 py-2.5 text-[14px] font-medium
+           transition-[background-color,border-color,color,opacity]
+           duration-fast disabled:cursor-not-allowed;
+  }
+
+  /*
+   * Disabled buttons keep their shape and a legible label rather than fading
+   * to near-invisible — a ghosted control reads as broken, not unavailable.
+   */
+  .btn:disabled {
+    @apply bg-ink-800 text-ink-500 opacity-100 hover:bg-ink-800;
   }
 
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-accent-hover;
+    @apply btn bg-accent text-white hover:bg-accent-hover active:bg-accent;
   }
 
   .btn-ghost {
-    @apply btn border border-ink-700 text-ink-200 hover:border-ink-500 hover:text-ink-100;
+    @apply btn border border-ink-700 bg-transparent text-ink-200
+           hover:border-ink-600 hover:bg-ink-800/60 hover:text-ink-100;
+  }
+
+  .btn-ghost:disabled {
+    @apply border-ink-800 bg-transparent text-ink-500;
+  }
+
+  /* A quiet control for icon-sized actions in dense rows. */
+  .btn-subtle {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-control
+           px-2.5 py-1.5 text-[13px] text-ink-400 transition-colors
+           duration-fast hover:bg-ink-800 hover:text-ink-100;
   }
 
   .card {
-    @apply rounded-2xl border border-ink-800 bg-ink-900/60 p-5;
+    @apply rounded-panel border border-ink-800 bg-ink-900 p-4;
+  }
+
+  /* The raised working surface: panels, media cards, the preview stage. */
+  .surface {
+    @apply rounded-panel border border-ink-800 bg-ink-900;
+  }
+
+  .surface-inset {
+    @apply rounded-panel border border-ink-800/80 bg-ink-950/60;
+  }
+
+  /* Section label: sentence case, quiet, no tracking-out shouting. */
+  .section-label {
+    @apply text-[13px] font-medium text-ink-200;
+  }
+
+  /* Secondary text sits at ink-300 so summaries stay legible on dim panels. */
+  .hint {
+    @apply text-[12px] leading-relaxed text-ink-300;
+  }
+
+  .metric {
+    @apply text-[13px] tabular-nums text-ink-200;
+  }
+
+  /*
+   * The editor stack: sections read as one connected surface rather than four
+   * floating cards. A shared border with collapsed internal corners removes
+   * the settings-page look without losing the boundary between sections.
+   */
+  .editor-stack > * + * {
+    @apply -mt-px;
+  }
+
+  .editor-stack > *:not(:first-child):not(:last-child) {
+    @apply rounded-none;
+  }
+
+  .editor-stack > *:first-child:not(:last-child) {
+    @apply rounded-b-none;
+  }
+
+  .editor-stack > *:last-child:not(:first-child) {
+    @apply rounded-t-none;
+  }
+}
+
+@layer utilities {
+  /* Skeletons: a single shimmer definition so loading states stay consistent. */
+  .skeleton {
+    @apply relative overflow-hidden bg-ink-800/70;
+  }
+
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.045),
+      transparent
+    );
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-sweep {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .skeleton::after {
+    transform: translateX(-100%);
   }
 }
 

@@ -102,17 +102,17 @@ export function RangeSlider({
         }}
       >
         {/* Track */}
-        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-ink-800" />
+        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-ink-800" />
 
         {/* Selected range */}
         <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
+          className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-accent/85"
           style={{ left: percent(start), width: percent(end - start) }}
         />
 
         {/* Playhead */}
         <div
-          className="pointer-events-none absolute top-1/2 h-4 w-px -translate-y-1/2 bg-ink-100"
+          className="pointer-events-none absolute top-1/2 h-5 w-[1.5px] -translate-y-1/2 rounded-full bg-ink-100"
           style={{ left: percent(playhead) }}
           aria-hidden="true"
         />
@@ -172,11 +172,18 @@ function Handle({
         onPointerDown();
       }}
       onKeyDown={onKeyDown}
-      className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 cursor-grab
-                 rounded-full border-2 border-ink-950 bg-accent shadow-lg
-                 transition-transform hover:scale-110 active:cursor-grabbing
-                 focus-visible:scale-110"
+      className="group absolute top-1/2 flex h-6 w-4 -translate-x-1/2 -translate-y-1/2
+                 cursor-grab items-center justify-center rounded-[4px] border
+                 border-ink-950/80 bg-accent shadow-panel transition-transform
+                 duration-fast hover:scale-110 active:cursor-grabbing
+                 active:scale-105 focus-visible:scale-110"
       style={{ left: position }}
-    />
+    >
+      {/* A grip line, so the handle reads as a draggable editing control. */}
+      <span
+        aria-hidden="true"
+        className="h-2.5 w-px rounded-full bg-ink-950/45"
+      />
+    </div>
   );
 }
