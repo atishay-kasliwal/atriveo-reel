@@ -1,0 +1,25 @@
+# Cloudflare Tunnel config for the reels app.
+#
+# Run with:  cloudflared tunnel --config scripts/cloudflared-reels.yml run
+#
+# The app binds to 127.0.0.1 only (see scripts/next-with-env.ts), so this
+# tunnel is the sole route in from outside. Auth is enforced by the app's
+# own middleware, which requires APP_PASSWORD to be set in .env.
+
+tunnel: 676efb0e-f0f4-4d2a-bc74-077e87da71ef
+credentials-file: /Users/atishaykasliwal/.cloudflared/676efb0e-f0f4-4d2a-bc74-077e87da71ef.json
+
+ingress:
+  - hostname: reels.atriveo.com
+    service: http://127.0.0.1:3001
+    originRequest:
+      # Renders stream as one long response; the default 30s write timeout
+      # would cut off a large MP4 download mid-transfer.
+      noHappyEyeballs: true
+      connectTimeout: 30s
+      # SSE progress events must not be buffered, or the progress bar only
+      # updates when the render finishes.
+      disableChunkedEncoding: false
+
+  # Required catch-all: anything not matched above gets a 404.
+  - service: http_status:404

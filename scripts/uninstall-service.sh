@@ -6,7 +6,7 @@ set -euo pipefail
 
 AGENTS_DIR="$HOME/Library/LaunchAgents"
 
-for label in com.atriveo.reel.web com.atriveo.reel.worker; do
+for label in com.atriveo.reel.web com.atriveo.reel.worker com.atriveo.reel.tunnel; do
   plist="$AGENTS_DIR/$label.plist"
   if [[ -f "$plist" ]]; then
     launchctl unload "$plist" 2>/dev/null || true
