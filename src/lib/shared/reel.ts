@@ -44,6 +44,7 @@ export const fitModeSchema = z.enum(["contain", "cover"]);
 
 export const textPositionSchema = z.enum(["top", "center", "bottom"]);
 export const textAlignSchema = z.enum(["left", "center", "right"]);
+export const textBackgroundStyleSchema = z.enum(["solid", "blur"]);
 
 const hexColor = z
   .string()
@@ -85,6 +86,8 @@ export const textElementSchema = z.object({
   color: hexColor.default("#ffffff"),
   /** Card background. Alpha is honoured, so #00000000 gives transparent. */
   background: hexColor.default("#000000"),
+  /** A blurred hold-frame from the surrounding video, or a solid colour. */
+  backgroundStyle: textBackgroundStyleSchema.default("solid"),
 });
 
 export const elementSchema = z.discriminatedUnion("type", [
@@ -154,6 +157,7 @@ export type FitMode = z.infer<typeof fitModeSchema>;
 export type VideoElement = z.infer<typeof videoElementSchema>;
 export type PauseElement = z.infer<typeof pauseElementSchema>;
 export type TextElement = z.infer<typeof textElementSchema>;
+export type TextBackgroundStyle = z.infer<typeof textBackgroundStyleSchema>;
 export type ReelElement = z.infer<typeof elementSchema>;
 export type ReelDocument = z.infer<typeof reelDocumentSchema>;
 

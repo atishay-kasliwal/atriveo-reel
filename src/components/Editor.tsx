@@ -9,6 +9,7 @@ import {
   type Layout,
   type ReelDocument,
   type ReelElementInput,
+  type TextBackgroundStyle,
 } from "@/lib/shared/reel";
 import type { MediaSource } from "@/lib/shared/types";
 
@@ -45,10 +46,17 @@ export interface TextCard {
   duration: number;
   position: "top" | "center" | "bottom";
   size: number;
+  backgroundStyle: TextBackgroundStyle;
 }
 
 export function emptyTextCard(): TextCard {
-  return { text: "", duration: 1.5, position: "center", size: 84 };
+  return {
+    text: "",
+    duration: 1.5,
+    position: "center",
+    size: 84,
+    backgroundStyle: "solid",
+  };
 }
 
 /** Everything the editor collects before a reel document is assembled. */
@@ -105,6 +113,7 @@ export function buildDocument(state: EditorState): ReelDocument {
       duration: card.duration,
       fontSize: card.size,
       position: card.position,
+      backgroundStyle: card.backgroundStyle,
     });
   };
 
@@ -121,16 +130,16 @@ export function buildDocument(state: EditorState): ReelDocument {
     fit: "cover",
   });
 
-  // A pause or card between the clips only has somewhere to go when the reel
-  // plays full-frame. The composited layouts render extras as separate
-  // full-screen segments, which would break the split view mid-reel, so the
-  // middle slot stays sequential-only.
+  // A pause remains a full-frame sequential-only option. Text cards are
+  // available in every layout: on take-turns, the middle card separates A
+  // from B; on simultaneous comparisons it follows the shared comparison.
   if (state.layout === "sequential") {
     if (state.pauseDuration > 0) {
       elements.push({ type: "pause", duration: state.pauseDuration, style: "freeze" });
     }
-    pushText("middle");
   }
+
+  pushText("middle");
 
   elements.push({
     type: "video",
@@ -546,4 +555,3 @@ function textSummary(state: EditorState): string {
   if (used === 0) return `No text cards${pause}`;
   return `${used} text card${used > 1 ? "s" : ""}${pause}`;
 }
-

@@ -158,18 +158,77 @@ test("each text slot is independently optional", () => {
   );
 });
 
-test("split layouts keep intro and outro but drop the middle card", () => {
+test("text cards preserve the selected background style", () => {
+  const texts = withText({ middle: "WATCH THIS" });
+  texts.middle.backgroundStyle = "blur";
+  const document = buildDocument(state({ texts }));
+  const middle = document.elements.find(
+    (element) => element.type === "text" && element.text === "WATCH THIS",
+  );
+
+  assert.equal(middle?.type, "text");
+  assert.equal(middle?.backgroundStyle, "blur");
+});
+
+test("intro, middle and outro support every selection combination", () => {
+  const slots: TextSlot[] = ["intro", "middle", "outro"];
+
+  for (let selected = 0; selected < 2 ** slots.length; selected += 1) {
+    const entries: Partial<Record<TextSlot, string>> = {};
+    const expected: string[] = [];
+
+    slots.forEach((slot, index) => {
+      if ((selected & (1 << index)) === 0) return;
+      const text = slot.toUpperCase();
+      entries[slot] = text;
+      expected.push(text);
+    });
+
+    const document = buildDocument(state({ texts: withText(entries) }));
+    assert.deepEqual(
+      document.elements.flatMap((element) =>
+        element.type === "text" ? [element.text] : [],
+      ),
+      expected,
+    );
+  }
+});
+
+test("every layout keeps the middle card", () => {
+  for (const layout of [
+    "sequential",
+    "top-bottom-turns",
+    "top-bottom",
+    "side-by-side",
+  ] as const) {
+    const doc = buildDocument(
+      state({ layout, texts: withText({ middle: "BETWEEN" }) }),
+    );
+
+    assert.deepEqual(
+      doc.elements.map((element) => element.type),
+      ["video", "text", "video"],
+    );
+    assert.deepEqual(
+      doc.elements.flatMap((element) =>
+        element.type === "text" ? [element.text] : [],
+      ),
+      ["BETWEEN"],
+    );
+  }
+});
+
+test("simultaneous layouts place intro, middle and outro around the comparison", () => {
   const doc = buildDocument(
     state({
       layout: "side-by-side",
-      texts: withText({ intro: "FIRST", middle: "DROPPED", outro: "LAST" }),
+      texts: withText({ intro: "FIRST", middle: "AFTER", outro: "LAST" }),
     }),
   );
 
-  // Both panes play together, so a card between them has nowhere to go.
   assert.deepEqual(
     doc.elements.flatMap((e) => (e.type === "text" ? [e.text] : [])),
-    ["FIRST", "LAST"],
+    ["FIRST", "AFTER", "LAST"],
   );
   // The intro must precede both videos so the renderer places it first.
   assert.equal(doc.elements[0].type, "text");

@@ -232,6 +232,86 @@ export function buildTurnsGraph(
   };
 }
 
+/** One playable leg of the take-turns comparison. */
+export type TurnsPhase = "a" | "b";
+
+/**
+ * Builds either half of a take-turns comparison as its own movie.
+ *
+ * Keeping the halves separate lets a full-frame card sit exactly between clip
+ * A and clip B. The inactive pane is a held first/last frame, matching the
+ * behaviour of `buildTurnsGraph`; only the active pane's audio is included.
+ */
+export function buildTurnsPhaseGraph(
+  doc: ReelDocument,
+  clipA: ClipInput,
+  clipB: ClipInput,
+  phase: TurnsPhase,
+): GraphResult {
+  const geometry = slotGeometry(doc);
+  if (!geometry) {
+    throw new Error(`buildTurnsPhaseGraph called for layout: ${doc.layout}`);
+  }
+
+  const { width, height, fps } = doc.format;
+  const durationA = clipA.element.end - clipA.element.start;
+  const durationB = clipB.element.end - clipB.element.start;
+  const duration = phase === "a" ? durationA : durationB;
+  const background = doc.backgroundColor.replace("#", "0x");
+  const oneFrame = 1 / fps;
+  const filters: string[] = [
+    `color=c=${background}:s=${width}x${height}:r=${fps}:d=${duration.toFixed(3)}[canvas]`,
+  ];
+
+  const active = phase === "a" ? clipA : clipB;
+  const inactive = phase === "a" ? clipB : clipA;
+  const activeIndex = phase === "a" ? 0 : 1;
+  const inactiveIndex = phase === "a" ? 1 : 0;
+  const activeSlot = phase === "a" ? geometry.a : geometry.b;
+  const inactiveSlot = phase === "a" ? geometry.b : geometry.a;
+  const inactiveFrameStart =
+    phase === "a"
+      ? 0
+      : Math.max(0, durationA - oneFrame);
+  const inactiveFrameEnd =
+    phase === "a" ? oneFrame : durationA;
+
+  filters.push(
+    `[${activeIndex}:v]fps=${fps},` +
+      `${fitFilter(activeSlot.w, activeSlot.h, active.element.fit, doc.backgroundColor)},` +
+      `setpts=PTS-STARTPTS[v${phase === "a" ? "a" : "b"}]`,
+  );
+  filters.push(
+    `[${inactiveIndex}:v]fps=${fps},` +
+      `${fitFilter(inactiveSlot.w, inactiveSlot.h, inactive.element.fit, doc.backgroundColor)},` +
+      `trim=start=${inactiveFrameStart.toFixed(3)}:end=${inactiveFrameEnd.toFixed(3)},` +
+      `tpad=stop_mode=clone:stop_duration=${duration.toFixed(3)},` +
+      `trim=duration=${duration.toFixed(3)},setpts=PTS-STARTPTS[` +
+      `v${phase === "a" ? "b" : "a"}]`,
+  );
+
+  const offsetB = `0:${geometry.a.h + doc.gutter}`;
+  filters.push(`[canvas][va]overlay=0:0:shortest=0[stage1]`);
+  filters.push(`[stage1][vb]overlay=${offsetB}[vout]`);
+
+  const audio = buildTurnsPhaseAudio(active, activeIndex, duration);
+  filters.push(...audio.filters);
+
+  return {
+    args: [
+      "-filter_complex",
+      filters.join(";"),
+      "-map",
+      "[vout]",
+      "-map",
+      audio.outputLabel,
+      "-t",
+      duration.toFixed(3),
+    ],
+    durationSeconds: duration,
+  };
+}
+
 /**
  * Audio for the take-turns layout: A's sound, then B's, joined end to end.
  *
@@ -270,6 +350,31 @@ function buildTurnsAudio(
 
   filters.push(`[atA][atB]concat=n=2:v=0:a=1[aout]`);
   return { filters, outputLabel: "[aout]" };
+}
+
+/** Audio for one take-turns phase: just the pane that is actually playing. */
+function buildTurnsPhaseAudio(
+  clip: ClipInput,
+  index: number,
+  duration: number,
+): { filters: string[]; outputLabel: string } {
+  if (clip.hasAudio && !clip.element.muted) {
+    return {
+      filters: [
+        `[${index}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+          `apad,atrim=0:${duration.toFixed(3)},asetpts=PTS-STARTPTS[aout]`,
+      ],
+      outputLabel: "[aout]",
+    };
+  }
+
+  return {
+    filters: [
+      `anullsrc=channel_layout=stereo:sample_rate=48000,` +
+        `atrim=0:${duration.toFixed(3)},asetpts=PTS-STARTPTS[aout]`,
+    ],
+    outputLabel: "[aout]",
+  };
 }
 
 /**
@@ -424,10 +529,53 @@ export function buildTextCardArgs(
   element: TextElement,
   overlayPath: string | null,
   outputPath: string,
+  /** A rendered frame from the relevant video, when blur was requested. */
+  backgroundFramePath: string | null = null,
 ): string[] {
   const { width, height, fps } = doc.format;
   const background = element.background.replace("#", "0x");
   const duration = element.duration;
+
+  if (element.backgroundStyle === "blur" && backgroundFramePath) {
+    const framePath = backgroundFramePath;
+    const blurredBackground =
+      `[0:v]fps=${fps},${fitFilter(width, height, "cover", doc.backgroundColor)},` +
+      `boxblur=20:1,eq=brightness=-0.08:saturation=0.75,setpts=PTS-STARTPTS[bg]`;
+
+    if (overlayPath) {
+      return [
+        "-loop", "1",
+        "-t", duration.toFixed(3),
+        "-i", framePath,
+        "-loop", "1",
+        "-t", duration.toFixed(3),
+        "-i", overlayPath,
+        "-f", "lavfi",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter_complex",
+        `${blurredBackground};` +
+          `[1:v]fps=${fps},scale=${width}:${height},setsar=1[txt];` +
+          `[bg][txt]overlay=0:0:format=auto,setpts=PTS-STARTPTS[v]`,
+        "-map", "[v]",
+        "-map", "2:a",
+        "-t", duration.toFixed(3),
+        outputPath,
+      ];
+    }
+
+    return [
+      "-loop", "1",
+      "-t", duration.toFixed(3),
+      "-i", framePath,
+      "-f", "lavfi",
+      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+      "-filter_complex", `${blurredBackground.replace("[bg]", "[v]")}`,
+      "-map", "[v]",
+      "-map", "1:a",
+      "-t", duration.toFixed(3),
+      outputPath,
+    ];
+  }
 
   if (overlayPath) {
     return [

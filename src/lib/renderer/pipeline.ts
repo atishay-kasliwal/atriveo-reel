@@ -16,7 +16,7 @@ import {
   buildSegmentArgs,
   buildSplitGraph,
   buildTextCardArgs,
-  buildTurnsGraph,
+  buildTurnsPhaseGraph,
   encoderArgs,
   type ClipInput,
 } from "./filtergraph";
@@ -56,6 +56,8 @@ export async function renderReel(options: PipelineOptions): Promise<void> {
 
   if (document.layout === "sequential") {
     await renderSequential(options, clips);
+  } else if (document.layout === "top-bottom-turns") {
+    await renderTurns(options, clips);
   } else {
     await renderSplit(options, clips);
   }
@@ -109,6 +111,44 @@ async function resolveClips(
 }
 
 /**
+ * Gets a reference for a blurred intro card before the first rendered segment
+ * exists. Later cards use their preceding rendered video frame instead.
+ */
+async function extractOpeningFrame(
+  document: ReelDocument,
+  clips: Map<VideoElement, ClipInput>,
+  workDir: string,
+): Promise<string | null> {
+  const firstVideoIndex = document.elements.findIndex((element) => element.type === "video");
+  const needsOpeningBlur = document.elements.some(
+    (element, index) =>
+      index < firstVideoIndex &&
+      element.type === "text" &&
+      element.backgroundStyle === "blur",
+  );
+  if (!needsOpeningBlur) return null;
+
+  const firstVideo = document.elements[firstVideoIndex];
+  if (!firstVideo || firstVideo.type !== "video") return null;
+  const clip = clips.get(firstVideo);
+  if (!clip) return null;
+
+  const framePath = path.join(workDir, "opening-frame.png");
+  try {
+    // extractFrame seeks a small amount before its target so target just past
+    // the clip start gives us the first visible video frame.
+    await extractFrame(
+      clip.path,
+      Math.min(clip.sourceDuration, clip.element.start + 0.05),
+      framePath,
+    );
+    return framePath;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Sequential: normalise every element to identical parameters, then concat.
  *
  * The concat demuxer requires exact agreement on codec, resolution, SAR, and
@@ -129,6 +169,7 @@ async function renderSequential(
 
   /** Last video frame seen, so a following pause can freeze on it. */
   let lastFramePath: string | null = null;
+  const openingFramePath = await extractOpeningFrame(document, clips, workDir);
 
   for (const [index, element] of document.elements.entries()) {
     if (signal?.aborted) throw new AppError("CANCELLED", "Cancelled during segments");
@@ -181,15 +222,148 @@ async function renderSequential(
       const overlayPath = await renderTextOverlay(element, document, workDir, index);
 
       await runFfmpeg(
-        ["-y", ...buildTextCardArgs(document, element, overlayPath, segmentPath).slice(0, -1),
+        ["-y", ...buildTextCardArgs(
+          document,
+          element,
+          overlayPath,
+          segmentPath,
+          lastFramePath ?? openingFramePath,
+        ).slice(0, -1),
           ...encoder, segmentPath],
         { signal },
       );
       completedDuration += element.duration;
-      // A text card resets the freeze reference; freezing on it would be odd.
-      lastFramePath = null;
+      // Keep the last video frame so adjacent cards can share its blur.
     }
 
+    segmentPaths.push(segmentPath);
+    options.onProgress?.(
+      (completedDuration / totalDuration) * SEGMENT_SHARE,
+      `Clip ${index + 1} of ${document.elements.length}`,
+    );
+  }
+
+  if (segmentPaths.length === 0) {
+    throw new AppError("RENDER_FAILED", "Reel produced no segments");
+  }
+
+  await concatSegments(segmentPaths, workDir, outputPath, totalDuration, options);
+}
+
+/**
+ * Take-turns: render A and B as separate stacked phases, so any card between
+ * their video elements is a true full-frame break rather than being moved to
+ * the end of the comparison.
+ */
+async function renderTurns(
+  options: PipelineOptions,
+  clips: Map<VideoElement, ClipInput>,
+): Promise<void> {
+  const { document, workDir, outputPath, signal } = options;
+  const videos = document.elements.filter(
+    (element): element is VideoElement => element.type === "video",
+  );
+  const clipA = clips.get(videos.find((video) => video.slot === "a")!);
+  const clipB = clips.get(videos.find((video) => video.slot === "b")!);
+  if (!clipA || !clipB) {
+    throw new AppError("RENDER_FAILED", "Take-turns layout is missing a pane");
+  }
+
+  const encoder = encoderArgs(config.render.encoder, config.render.quality);
+  const segmentPaths: string[] = [];
+  const totalDuration = reelDuration(document);
+  const SEGMENT_SHARE = 0.85;
+  let completedDuration = 0;
+  let lastFramePath: string | null = null;
+  const openingFramePath = await extractOpeningFrame(document, clips, workDir);
+
+  for (const [index, element] of document.elements.entries()) {
+    if (signal?.aborted) throw new AppError("CANCELLED", "Cancelled during segments");
+
+    const segmentPath = path.join(workDir, `seg-${String(index).padStart(3, "0")}.mp4`);
+    let segmentDuration = 0;
+
+    if (element.type === "video") {
+      const graph = buildTurnsPhaseGraph(
+        document,
+        clipA,
+        clipB,
+        element.slot,
+      );
+      const base = completedDuration;
+      segmentDuration = graph.durationSeconds;
+
+      await runFfmpeg(
+        [
+          "-y",
+          "-ss",
+          clipA.element.start.toFixed(3),
+          "-t",
+          (clipA.element.end - clipA.element.start).toFixed(3),
+          "-i",
+          clipA.path,
+          "-ss",
+          clipB.element.start.toFixed(3),
+          "-t",
+          (clipB.element.end - clipB.element.start).toFixed(3),
+          "-i",
+          clipB.path,
+          ...graph.args,
+          ...encoder,
+          segmentPath,
+        ],
+        {
+          totalDurationSeconds: segmentDuration,
+          signal,
+          onProgress: (_progress, fraction) => {
+            if (fraction === undefined) return;
+            const overall = (base + fraction * segmentDuration) / totalDuration;
+            options.onProgress?.(overall * SEGMENT_SHARE, `Clip ${index + 1}`);
+          },
+        },
+      );
+
+      const framePath = path.join(workDir, `frame-${index}.png`);
+      try {
+        await extractFrame(segmentPath, segmentDuration, framePath);
+        lastFramePath = framePath;
+      } catch {
+        // A blur request gracefully falls back to the solid card background.
+        lastFramePath = null;
+      }
+    } else if (element.type === "text") {
+      const overlayPath = await renderTextOverlay(element, document, workDir, index);
+      segmentDuration = element.duration;
+      await runFfmpeg(
+        [
+          "-y",
+          ...buildTextCardArgs(
+            document,
+            element,
+            overlayPath,
+            segmentPath,
+            lastFramePath ?? openingFramePath,
+          ).slice(0, -1),
+          ...encoder,
+          segmentPath,
+        ],
+        { signal },
+      );
+    } else {
+      if (element.duration <= 0) continue;
+      segmentDuration = element.duration;
+      await runFfmpeg(
+        [
+          "-y",
+          ...buildPauseArgs(document, element.duration, "black", null, segmentPath).slice(0, -1),
+          ...encoder,
+          segmentPath,
+        ],
+        { signal },
+      );
+    }
+
+    completedDuration += segmentDuration;
     segmentPaths.push(segmentPath);
     options.onProgress?.(
       (completedDuration / totalDuration) * SEGMENT_SHARE,
@@ -244,7 +418,7 @@ async function concatSegments(
   );
 }
 
-/** Split layouts: both panes composite in a single FFmpeg pass. */
+/** Simultaneous split layouts: both panes composite in a single FFmpeg pass. */
 async function renderSplit(
   options: PipelineOptions,
   clips: Map<VideoElement, ClipInput>,
@@ -264,12 +438,8 @@ async function renderSplit(
   const clipB = clips.get(elementB);
   if (!clipA || !clipB) throw new AppError("RENDER_FAILED", "Split layout clips unresolved");
 
-  // Both layouts composite two panes; they differ only in whether the clips
-  // run together or in turn, which is entirely a filter-graph concern.
-  const graph =
-    document.layout === "top-bottom-turns"
-      ? buildTurnsGraph(document, clipA, clipB)
-      : buildSplitGraph(document, clipA, clipB);
+  // The remaining split layouts both composite two panes concurrently.
+  const graph = buildSplitGraph(document, clipA, clipB);
   const encoder = encoderArgs(config.render.encoder, config.render.quality);
 
   const compositePath = path.join(workDir, "composite.mp4");
@@ -297,10 +467,12 @@ async function renderSplit(
     },
   );
 
-  // Text and pause elements still apply to split layouts; they play before or
-  // after the composited pair rather than beside it.
-  const extras = document.elements.filter(
-    (e) => e.type === "text" || e.type === "pause",
+  // Text and pause elements still apply to simultaneous split layouts. A
+  // middle card follows the shared comparison because both panes play at once.
+  const extras = document.elements.flatMap((element, index) =>
+    element.type === "text" || element.type === "pause"
+      ? [{ element, index }]
+      : [],
   );
 
   if (extras.length === 0) {
@@ -309,14 +481,51 @@ async function renderSplit(
     return;
   }
 
+  const firstVideoIndex = document.elements.findIndex((element) => element.type === "video");
+  const needsBlurBefore = extras.some(
+    ({ element, index }) =>
+      element.type === "text" && element.backgroundStyle === "blur" && index < firstVideoIndex,
+  );
+  const needsBlurAfter = extras.some(
+    ({ element, index }) =>
+      element.type === "text" && element.backgroundStyle === "blur" && index >= firstVideoIndex,
+  );
+  let firstCompositeFrame: string | null = null;
+  let lastCompositeFrame: string | null = null;
+
+  if (needsBlurBefore) {
+    try {
+      firstCompositeFrame = path.join(workDir, "composite-first.png");
+      await extractFrame(compositePath, 0, firstCompositeFrame);
+    } catch {
+      firstCompositeFrame = null;
+    }
+  }
+  if (needsBlurAfter) {
+    try {
+      lastCompositeFrame = path.join(workDir, "composite-last.png");
+      await extractFrame(compositePath, graph.durationSeconds, lastCompositeFrame);
+    } catch {
+      lastCompositeFrame = null;
+    }
+  }
+
   const segments: string[] = [];
-  for (const [index, element] of extras.entries()) {
+  for (const { element, index } of extras) {
     const segmentPath = path.join(workDir, `extra-${index}.mp4`);
 
     if (element.type === "text") {
       const overlayPath = await renderTextOverlay(element, document, workDir, index);
+      const backgroundFramePath =
+        index < firstVideoIndex ? firstCompositeFrame : lastCompositeFrame;
       await runFfmpeg(
-        ["-y", ...buildTextCardArgs(document, element, overlayPath, segmentPath).slice(0, -1),
+        ["-y", ...buildTextCardArgs(
+          document,
+          element,
+          overlayPath,
+          segmentPath,
+          backgroundFramePath,
+        ).slice(0, -1),
           ...encoder, segmentPath],
         { signal },
       );
@@ -333,7 +542,6 @@ async function renderSplit(
 
   // Ordering follows the document: elements listed before the videos play
   // first, the rest play after.
-  const firstVideoIndex = document.elements.findIndex((e) => e.type === "video");
   const before: string[] = [];
   const after: string[] = [];
   let cursor = 0;

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildTextCardArgs,
   buildTurnsGraph,
+  buildTurnsPhaseGraph,
   fitFilter,
   slotGeometry,
   type ClipInput,
@@ -115,6 +117,76 @@ test("take-turns holds each pane still while the other plays", () => {
   const geometry = slotGeometry(turnsDoc);
   assert.ok(geometry);
   assert.match(filters, new RegExp(`overlay=0:${geometry.a.h + 6}`));
+});
+
+test("take-turns phases can be separated by a full-frame card", () => {
+  const turnsDoc = reelDocumentSchema.parse({
+    layout: "top-bottom-turns",
+    gutter: 6,
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "text", text: "BETWEEN", duration: 1.5 },
+      { type: "video", sourceId: "b", start: 0, end: 4, slot: "b" },
+    ],
+  });
+
+  const clip = (id: string): ClipInput => ({
+    path: `/tmp/${id}.mp4`,
+    element: turnsDoc.elements.find(
+      (element) => element.type === "video" && element.sourceId === id,
+    ) as ClipInput["element"],
+    sourceDuration: 300,
+    hasAudio: true,
+  });
+
+  const phaseA = buildTurnsPhaseGraph(turnsDoc, clip("a"), clip("b"), "a");
+  const phaseB = buildTurnsPhaseGraph(turnsDoc, clip("a"), clip("b"), "b");
+  const filtersA = phaseA.args[phaseA.args.indexOf("-filter_complex") + 1];
+  const filtersB = phaseB.args[phaseB.args.indexOf("-filter_complex") + 1];
+
+  assert.equal(phaseA.durationSeconds, 10);
+  assert.equal(phaseB.durationSeconds, 4);
+  // B holds its first frame while A plays, then A's last frame holds for B.
+  assert.match(filtersA, /trim=start=0\.000:end=0\.033/);
+  assert.match(filtersB, /trim=start=9\.967:end=10\.000/);
+  // Each phase emits the audio of the pane that is actually playing.
+  assert.match(filtersA, /\[0:a\].*\[aout\]/);
+  assert.match(filtersB, /\[1:a\].*\[aout\]/);
+  assert.ok(!filtersA.includes("concat=n=2"));
+});
+
+test("blurred text cards use a video frame as their backdrop", () => {
+  const textDoc = reelDocumentSchema.parse({
+    layout: "sequential",
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "text", text: "BETWEEN", backgroundStyle: "blur" },
+    ],
+  });
+  const text = textDoc.elements.find(
+    (element) => element.type === "text",
+  );
+  assert.ok(text && text.type === "text");
+
+  const blurred = buildTextCardArgs(
+    textDoc,
+    text,
+    "/tmp/words.png",
+    "/tmp/card.mp4",
+    "/tmp/video-frame.png",
+  ).join(" ");
+  assert.match(blurred, /-i \/tmp\/video-frame\.png/);
+  assert.match(blurred, /boxblur=20:1/);
+  assert.match(blurred, /eq=brightness=-0\.08:saturation=0\.75/);
+
+  const fallback = buildTextCardArgs(
+    textDoc,
+    text,
+    "/tmp/words.png",
+    "/tmp/card.mp4",
+  ).join(" ");
+  assert.ok(!fallback.includes("boxblur"));
+  assert.match(fallback, /color=c=0x000000/);
 });
 
 test("sequential duration sums; split duration takes the longer pane", () => {

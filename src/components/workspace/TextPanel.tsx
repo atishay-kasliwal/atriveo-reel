@@ -21,13 +21,16 @@ const POSITION_OPTIONS = [
   { value: "bottom", label: "Bottom" },
 ] as const;
 
+const BACKGROUND_OPTIONS = [
+  { value: "solid", label: "Black" },
+  { value: "blur", label: "Blurred video" },
+] as const;
+
 const SLOTS: {
   slot: TextSlot;
   label: string;
   hint: string;
   placeholder: string;
-  /** Only meaningful when the reel plays full frame. */
-  sequentialOnly?: boolean;
 }[] = [
   {
     slot: "intro",
@@ -38,9 +41,8 @@ const SLOTS: {
   {
     slot: "middle",
     label: "Middle",
-    hint: "Between the two videos",
+    hint: "After the first video",
     placeholder: "Or this?",
-    sequentialOnly: true,
   },
   {
     slot: "outro",
@@ -57,21 +59,15 @@ export function TextPanel({
   state: EditorState;
   onChange: (patch: Partial<EditorState>) => void;
 }) {
-  const isSequential = state.layout === "sequential";
-
   const updateCard = (slot: TextSlot, patch: Partial<TextCard>) => {
     onChange({
       texts: { ...state.texts, [slot]: { ...state.texts[slot], ...patch } },
     });
   };
 
-  const visibleSlots = SLOTS.filter(
-    (entry) => isSequential || !entry.sequentialOnly,
-  );
-
   return (
     <div className="space-y-4">
-      {isSequential && (
+      {state.layout === "sequential" && (
         <div>
           <p className="section-label mb-1.5">Pause between clips</p>
           <div className="flex gap-1.5">
@@ -96,7 +92,7 @@ export function TextPanel({
           </p>
         </div>
 
-        {visibleSlots.map((entry) => (
+        {SLOTS.map((entry) => (
           <TextCardEditor
             key={entry.slot}
             label={entry.label}
@@ -164,6 +160,18 @@ function TextCardEditor({
                 key={option.value}
                 selected={card.position === option.value}
                 onClick={() => onChange({ position: option.value })}
+              >
+                {option.label}
+              </Chip>
+            ))}
+          </Control>
+
+          <Control label="Backdrop">
+            {BACKGROUND_OPTIONS.map((option) => (
+              <Chip
+                key={option.value}
+                selected={card.backgroundStyle === option.value}
+                onClick={() => onChange({ backgroundStyle: option.value })}
               >
                 {option.label}
               </Chip>
