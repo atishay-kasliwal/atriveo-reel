@@ -91,7 +91,14 @@ export function PreviewStage({
         />
       )}
 
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-control border border-ink-800 bg-ink-900 px-3 py-2">
+      {/*
+        One line rather than a 2x2 grid: this is a readout the eye passes over
+        on the way to the render button, and four stacked label/value pairs
+        took more vertical room than the preview could spare. The values carry
+        their own units, so the visible labels are redundant — they stay for
+        screen readers, where the order alone would not convey them.
+      */}
+      <dl className="flex flex-wrap items-baseline rounded-control border border-ink-800 bg-ink-900 px-3 py-1.5">
         <Metric label="Output" value="1080 × 1920" />
         <Metric label="Frame rate" value="30 fps" />
         <Metric label="Length" value={ready ? `${total.toFixed(1)}s` : "—"} />
@@ -281,10 +288,14 @@ function Timeline({
   );
 }
 
+/**
+ * A separator drawn in CSS rather than as markup, so nothing but `dt`/`dd`
+ * pairs sit inside the `dl`.
+ */
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0">
-      <dt className="text-[10px] leading-tight text-ink-400">{label}</dt>
+    <div className="flex min-w-0 items-baseline before:mx-1.5 before:text-ink-700 before:content-['·'] first:before:content-none">
+      <dt className="sr-only">{label}</dt>
       <dd className="metric truncate text-[12px] leading-tight">{value}</dd>
     </div>
   );
