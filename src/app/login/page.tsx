@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { api, ApiError } from "@/lib/api/client";
+import { BrandMark } from "@/components/BrandMark";
 
 function LoginForm() {
   const router = useRouter();
@@ -34,6 +35,7 @@ function LoginForm() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center px-6">
+      <BrandMark className="mx-auto mb-4 h-9 w-9 text-ink-200" />
       <h1 className="mb-2 text-center text-2xl font-semibold tracking-[0.15em]">
         ATRIVEO <span className="text-accent">REEL</span>
       </h1>
