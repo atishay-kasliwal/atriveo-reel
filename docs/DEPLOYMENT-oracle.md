@@ -255,9 +255,27 @@ The app detects this specific failure and says so plainly rather than blaming
 the link, so you will know when it starts. Uploads are unaffected; only
 YouTube URLs are.
 
-The fix is to give yt-dlp a signed-in cookie jar. On a machine with a browser,
-export cookies for `youtube.com` in Netscape format using a cookies.txt
-extension, then:
+Observed behaviour on an Oracle Ashburn instance: the gate is per-video, not a
+blanket block on the address. Some videos resolve normally while others are
+refused, so a working test proves nothing about the next request.
+
+The fix is to give yt-dlp a signed-in cookie jar. Export it in a private
+window, in this order — the sequence is what decides whether the cookie lasts
+months or days:
+
+1. Open a new incognito/private window.
+2. Sign into YouTube with a throwaway account.
+3. Go to `https://www.youtube.com/robots.txt`, a page that will not rotate the
+   auth tokens under you.
+4. Export cookies for `youtube.com` in Netscape format with a cookies.txt
+   browser extension.
+5. Close the window **without signing out**. Signing out invalidates the
+   cookie that was just exported; closing the window leaves it valid.
+
+Never open that account in a normal window afterwards. Ordinary browsing
+rotates the tokens and invalidates the server's copy.
+
+Then install it:
 
 ```bash
 scp cookies.txt ubuntu@<instance-ip>:~
@@ -280,9 +298,9 @@ Three caveats worth taking seriously:
 
 - **Cookies expire**, typically within weeks to months. When downloads start
   failing again, re-export.
-- **Use a throwaway Google account.** You are handing session cookies to a
-  server and using them for automated downloading; do not use an account you
-  care about.
+- **Use a throwaway Google account.** The cookie sits on a cloud host
+  indefinitely, and anyone who reaches that host can act as the account it
+  belongs to. Do not use an account you care about.
 - **It is not a guaranteed fix.** Persistent bot-gating from a given IP
   sometimes continues regardless, in which case the options are a residential
   proxy, uploading files instead of pasting links, or keeping fetching on the
