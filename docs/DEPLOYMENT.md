@@ -1,5 +1,8 @@
 # Deploying Atriveo Reel on a Mac Mini
 
+> For hosting on a cloud instance rather than at home, see
+> [DEPLOYMENT-oracle.md](DEPLOYMENT-oracle.md).
+
 The Mac Mini runs everything: the web app, the API, and the render worker. It
 is reached from the internet through an existing Cloudflare Tunnel.
 

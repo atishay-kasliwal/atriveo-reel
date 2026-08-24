@@ -50,10 +50,31 @@ const FORMAT_SELECTOR = [
   "b",
 ].join("/");
 
+/**
+ * Cookie arguments shared by every yt-dlp invocation.
+ *
+ * YouTube bot-gates requests from datacenter IP ranges much more readily than
+ * from home connections, so the same code that needs nothing on a machine at
+ * home needs a signed-in cookie jar once it moves to a cloud host.
+ */
+function cookieArgs(): string[] {
+  const cookies = config.media.ytdlpCookies;
+  return cookies === "" ? [] : ["--cookies", cookies];
+}
+
 /** Maps yt-dlp's stderr text onto our error taxonomy. */
 function classifyYtdlpError(stderr: string): AppError {
   const text = stderr.toLowerCase();
 
+  // The bot gate is a server-side problem, not a problem with the video, so it
+  // gets a message that points at the fix rather than blaming the link.
+  if (text.includes("sign in to confirm you're not a bot") || text.includes("confirm you\u2019re not a bot")) {
+    return new AppError(
+      "DOWNLOAD_FAILED",
+      stderr,
+      "YouTube is blocking downloads from this server. It needs a cookies file to keep fetching videos.",
+    );
+  }
   if (text.includes("private video") || text.includes("sign in to confirm your age")) {
     return new AppError("VIDEO_UNAVAILABLE", stderr);
   }
@@ -102,6 +123,7 @@ export class YouTubeProvider implements MediaProvider {
       "--dump-json",
       "--no-warnings",
       "--no-playlist",
+      ...cookieArgs(),
       canonicalUrl,
     ]);
 
@@ -185,6 +207,7 @@ export class YouTubeProvider implements MediaProvider {
           // enough to parse across yt-dlp versions.
           "--progress-template",
           "DLPROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s",
+          ...cookieArgs(),
           "-o", stagingTemplate,
           `https://www.youtube.com/watch?v=${media.sourceReference}`,
         ],

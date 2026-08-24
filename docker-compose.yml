@@ -6,7 +6,13 @@
 # production deployment on the Mac Mini runs natively (see docs/DEPLOYMENT.md).
 #
 # On a Linux host this compose file runs the whole stack; set
-# VIDEO_ENCODER=libx264 since VideoToolbox is macOS-only.
+# VIDEO_ENCODER=libx264 since VideoToolbox is macOS-only. That is the path the
+# Oracle Cloud deployment takes — see docs/DEPLOYMENT-oracle.md, which also
+# covers the arm64 and YouTube-bot-gate differences of running off-premises.
+#
+# The tunnel service is behind a profile so local runs don't publish anything:
+#   docker compose up -d                      # web + worker only
+#   docker compose --profile tunnel up -d     # ...plus the Cloudflare Tunnel
 
 services:
   web:
@@ -25,6 +31,7 @@ services:
       DATA_DIR: /data
       VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
       VIDEO_QUALITY: ${VIDEO_QUALITY:-20}
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-}
     volumes:
       - reels-data:/data
     restart: unless-stopped
@@ -39,11 +46,32 @@ services:
       VIDEO_ENCODER: ${VIDEO_ENCODER:-libx264}
       VIDEO_QUALITY: ${VIDEO_QUALITY:-20}
       MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-1}
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-}
     volumes:
       # Same volume as the web service: they share SQLite and the media files.
       - reels-data:/data
     restart: unless-stopped
     # No ports. The worker must never be reachable from outside.
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    # Reaches the app over the compose network, so the web service never has
+    # to publish a port on the host at all.
+    command: tunnel --no-autoupdate --protocol http2 run
+    environment:
+      # From the Zero Trust dashboard: Networks -> Tunnels -> your tunnel ->
+      # Install and run a connector. Use a tunnel of this host's own, not the
+      # Mac Mini's: the same tunnel ID running in two places becomes an HA
+      # pair, and requests would land on whichever host answered first.
+      #
+      # Plain default rather than a `:?` guard: Compose interpolates every
+      # service before it filters by profile, so a required-variable check
+      # here would also break `docker compose up` without the profile.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+    restart: unless-stopped
 
 volumes:
   reels-data:

@@ -182,6 +182,11 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for running as a persistent
 service via `launchd` and routing `reels.atrivio.com` through the Cloudflare
 Tunnel.
 
+For hosting off-premises instead, [docs/DEPLOYMENT-oracle.md](docs/DEPLOYMENT-oracle.md)
+covers an always-free Oracle Ampere instance running the Docker Compose stack,
+including the two things that genuinely differ there: software encoding in
+place of VideoToolbox, and YouTube's bot gate on datacenter IPs.
+
 Short version:
 
 ```bash

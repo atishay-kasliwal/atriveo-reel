@@ -27,6 +27,8 @@ function bool(key: string, fallback: boolean): boolean {
 
 const dataDir = path.resolve(expandHome(str("DATA_DIR", "~/reels-data")));
 
+const ytdlpCookies = str("YTDLP_COOKIES", "");
+
 export const config = {
   appPort: int("APP_PORT", 3000),
 
@@ -57,6 +59,12 @@ export const config = {
 
   media: {
     ytdlpPath: str("YTDLP_PATH", "yt-dlp"),
+    /*
+     * Path to an exported cookies.txt, or empty for none. Home connections
+     * need no cookies; datacenter IPs are bot-gated by YouTube far more
+     * often, and cookies make yt-dlp request as a signed-in browser would.
+     */
+    ytdlpCookies: ytdlpCookies === "" ? "" : path.resolve(expandHome(ytdlpCookies)),
     maxSourceDurationSeconds: int("MAX_SOURCE_DURATION_SECONDS", 14400),
     maxUploadMb: int("MAX_UPLOAD_MB", 2048),
   },
