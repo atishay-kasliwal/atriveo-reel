@@ -56,19 +56,21 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
-    # Reaches the app over the compose network, so the web service never has
-    # to publish a port on the host at all.
-    command: tunnel --no-autoupdate --protocol http2 run
-    environment:
-      # From the Zero Trust dashboard: Networks -> Tunnels -> your tunnel ->
-      # Install and run a connector. Use a tunnel of this host's own, not the
-      # Mac Mini's: the same tunnel ID running in two places becomes an HA
-      # pair, and requests would land on whichever host answered first.
-      #
-      # Plain default rather than a `:?` guard: Compose interpolates every
-      # service before it filters by profile, so a required-variable check
-      # here would also break `docker compose up` without the profile.
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    # Config file rather than a --token: a tunnel created with `cloudflared
+    # tunnel create` is locally managed, so its remote config is empty and a
+    # token-run connector would register fine but 404 every request. Keeping
+    # ingress here also means it is reviewable in the repository.
+    # The image's default user cannot read a 0600 credentials file owned by
+    # the host account. Running as that account keeps the secret unreadable to
+    # everyone else rather than widening its permissions to suit the container.
+    # Not hardcoded, because the account's id varies by image — Oracle's Ubuntu
+    # numbers its default user 1001 where most images use 1000. `id -u`.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./scripts/cloudflared-oracle.yml:/etc/cloudflared/config.yml:ro
+      # Not in the repository. See docs/DEPLOYMENT-oracle.md.
+      - ./secrets/tunnel-credentials.json:/etc/cloudflared/creds.json:ro
     depends_on:
       - web
     restart: unless-stopped

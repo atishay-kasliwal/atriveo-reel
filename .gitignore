@@ -22,3 +22,6 @@ reels-data/
 npm-debug.log*
 
 .remotion/
+
+# Tunnel credentials and anything else that must not be committed.
+secrets/

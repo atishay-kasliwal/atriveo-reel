@@ -1,0 +1,37 @@
+# Cloudflare Tunnel config for the Oracle Cloud deployment.
+#
+# Mounted into the cloudflared container by the "tunnel" profile in
+# docker-compose.yml. The companion credentials file is not in the repository
+# — see docs/DEPLOYMENT-oracle.md for placing it.
+#
+# This is a separate tunnel from the Mac Mini's (scripts/cloudflared-reels.yml)
+# on purpose: two connectors sharing one tunnel ID become a high-availability
+# pair, and requests would land on whichever host answered first, with two
+# SQLite databases diverging behind them.
+
+tunnel: c40a5d6d-4075-416a-b268-083130fedf5f
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  - hostname: reels.atriveo.com
+    # The service name on the compose network, not localhost: cloudflared runs
+    # in its own container and localhost there is itself.
+    service: http://web:3000
+    originRequest:
+      connectTimeout: 30s
+      # SSE progress events must not be buffered, or the render progress bar
+      # only moves when the render has already finished.
+      disableChunkedEncoding: false
+
+  # A second name for the same origin, so the deployment can be exercised
+  # end-to-end before the live hostname is pointed here — and afterwards, so a
+  # change can be checked without taking the real one down. Safe to delete
+  # along with its DNS record once it has served its purpose.
+  - hostname: reels-oracle.atriveo.com
+    service: http://web:3000
+    originRequest:
+      connectTimeout: 30s
+      disableChunkedEncoding: false
+
+  # Required catch-all: anything not matched above gets a 404.
+  - service: http_status:404
