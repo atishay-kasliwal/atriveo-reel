@@ -96,9 +96,33 @@ docker run --rm hello-world
 
 ## 3. Get the app onto the instance
 
+The repository is private, so HTTPS cloning would prompt for credentials the
+instance has no way to answer. Give it a read-only deploy key instead, which
+also leaves `git pull` working for later updates.
+
+On the instance, generate a key:
+
 ```bash
-git clone https://github.com/atriveo/reels.git ~/reels
+ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N "" -C "reels-oracle-deploy"
+cat ~/.ssh/github_deploy.pub
+```
+
+Add that public key to the repository — GitHub → the repo → Settings → Deploy
+keys → Add, leaving "Allow write access" unchecked. Or from a machine with the
+`gh` CLI authenticated:
+
+```bash
+gh repo deploy-key add key.pub --title "reels-oracle (read-only)" \
+  --repo atishay-kasliwal/atriveo-reel
+```
+
+Then clone over SSH and make the key stick for future pulls:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/github_deploy -o IdentitiesOnly=yes" \
+  git clone git@github.com:atishay-kasliwal/atriveo-reel.git ~/reels
 cd ~/reels
+git config core.sshCommand "ssh -i ~/.ssh/github_deploy -o IdentitiesOnly=yes"
 cp .env.example .env
 ```
 

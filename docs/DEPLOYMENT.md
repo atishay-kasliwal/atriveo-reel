@@ -7,7 +7,7 @@ The Mac Mini runs everything: the web app, the API, and the render worker. It
 is reached from the internet through an existing Cloudflare Tunnel.
 
 ```
-https://reels.atrivio.com
+https://reels.atriveo.com
         │
         ▼
 Cloudflare edge
@@ -45,7 +45,7 @@ slower but still correct.
 ## 2. Get the app onto the machine
 
 ```bash
-git clone https://github.com/atriveo/reels.git ~/reels
+git clone https://github.com/atishay-kasliwal/atriveo-reel.git ~/reels
 cd ~/reels
 npm ci
 cp .env.example .env
@@ -134,7 +134,7 @@ Zero Trust → Networks → Tunnels → your tunnel → **Public Hostname** → 
 | Field | Value |
 |---|---|
 | Subdomain | `reels` |
-| Domain | `atrivio.com` |
+| Domain | `atriveo.com` |
 | Type | `HTTP` |
 | URL | `localhost:3000` |
 
@@ -149,7 +149,7 @@ tunnel: <your-tunnel-id>
 credentials-file: /Users/<you>/.cloudflared/<tunnel-id>.json
 
 ingress:
-  - hostname: reels.atrivio.com
+  - hostname: reels.atriveo.com
     service: http://localhost:3000
     originRequest:
       # Renders stream progress over Server-Sent Events; a short idle
@@ -174,7 +174,7 @@ cloudflared tunnel run <your-tunnel>
 Verify:
 
 ```bash
-curl -I https://reels.atrivio.com
+curl -I https://reels.atriveo.com
 ```
 
 **Only route the web app.** The render worker listens on no port at all — it
@@ -189,7 +189,7 @@ For a stronger gate, put Cloudflare Access in front of the hostname and let the
 edge authenticate you before traffic reaches the Mac:
 
 Zero Trust → Access → Applications → Add → Self-hosted, domain
-`reels.atrivio.com`, with a policy allowing your email.
+`reels.atriveo.com`, with a policy allowing your email.
 
 You can then leave `APP_PASSWORD` empty, since Cloudflare handles auth. Only do
 that if Access is definitely active — an empty `APP_PASSWORD` disables the

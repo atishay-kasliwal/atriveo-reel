@@ -58,7 +58,7 @@ node --version && ffmpeg -version | head -1 && yt-dlp --version
 ## Quick start
 
 ```bash
-git clone https://github.com/atriveo/reels.git
+git clone https://github.com/atishay-kasliwal/atriveo-reel.git
 cd reels
 npm install
 cp .env.example .env
@@ -179,7 +179,7 @@ change. `Storage` is similarly abstracted for a move to R2/S3.
 ## Deployment
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for running as a persistent
-service via `launchd` and routing `reels.atrivio.com` through the Cloudflare
+service via `launchd` and routing `reels.atriveo.com` through the Cloudflare
 Tunnel.
 
 For hosting off-premises instead, [docs/DEPLOYMENT-oracle.md](docs/DEPLOYMENT-oracle.md)

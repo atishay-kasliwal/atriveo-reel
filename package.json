@@ -6,9 +6,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/atriveo/reels.git"
+    "url": "https://github.com/atishay-kasliwal/atriveo-reel.git"
   },
-  "homepage": "https://reels.atrivio.com",
+  "homepage": "https://reels.atriveo.com",
   "scripts": {
     "dev": "tsx scripts/next-with-env.ts dev",
     "dev:worker": "tsx watch src/worker/main.ts",
