@@ -32,6 +32,13 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
+# Remotion renders text cards through a headless Chrome it fetches on first
+# use. Doing that here, in the same layer as the dependencies it belongs to,
+# keeps the first render after a deploy from stalling on an 88 MB download —
+# and means a render doesn't depend on the host having outbound access at the
+# moment a job happens to arrive.
+RUN node -e "require('@remotion/renderer').ensureBrowser()"
+
 COPY . .
 
 RUN npm run build
