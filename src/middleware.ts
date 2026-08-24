@@ -64,9 +64,14 @@ export const config = {
   runtime: "nodejs",
   matcher: [
     /*
-     * Everything except Next's own assets and the favicon. Media files are
+     * Everything except Next's own assets and the icons. Media files are
      * served through /api/media, so they stay behind auth.
+     *
+     * `icon.svg` is the app icon Next generates from src/app/icon.svg and
+     * links from every page's head. Gating it would redirect the browser's
+     * icon request to the login page, so the tab shows nothing at all until
+     * someone signs in — including on the login page itself.
      */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg).*)",
   ],
 };
