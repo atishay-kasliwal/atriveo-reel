@@ -22,3 +22,8 @@ reels-data/
 npm-debug.log*
 
 .remotion/
+
+# Cookie jars are credentials. Never commit one, whatever it is called.
+cookies.txt
+*cookies*.txt
+*_cookies.txt
