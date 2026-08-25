@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildDocument,
+  emptyCaptionBand,
   emptyTextCard,
   type EditorState,
   type TextSlot,
@@ -34,9 +35,27 @@ function state(overrides: Partial<EditorState> = {}): EditorState {
       middle: emptyTextCard(),
       outro: emptyTextCard(),
     },
+    captionBand: emptyCaptionBand(),
     ...overrides,
   };
 }
+
+test("the caption band rides along with the document, layout aside", () => {
+  const band = { text: "  WHO DID IT BETTER?  ", height: 300, size: 84 };
+
+  const stacked = buildDocument(state({ layout: "top-bottom-turns", captionBand: band }));
+  assert.equal(stacked.captionBand.text, "WHO DID IT BETTER?");
+  assert.equal(stacked.captionBand.height, 300);
+  assert.equal(stacked.captionBand.fontSize, 84);
+  // The band is not a timeline element: it adds no elements and no time.
+  assert.deepEqual(stacked.elements.map((e) => e.type), ["video", "video"]);
+  assert.equal(reelDuration(stacked), 18);
+
+  // Layouts with no gap still carry the text, so switching away and back does
+  // not lose what the user typed.
+  const sideBySide = buildDocument(state({ layout: "side-by-side", captionBand: band }));
+  assert.equal(sideBySide.captionBand.text, "WHO DID IT BETTER?");
+});
 
 /** Builds the `texts` map with the named slots filled in. */
 function withText(entries: Partial<Record<TextSlot, string>>) {

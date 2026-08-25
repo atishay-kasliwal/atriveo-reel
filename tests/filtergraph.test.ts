@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildPauseArgs,
   buildTextCardArgs,
   buildTurnsGraph,
   buildTurnsPhaseGraph,
+  captionBandRect,
   fitFilter,
   slotGeometry,
   type ClipInput,
@@ -153,6 +155,233 @@ test("take-turns phases can be separated by a full-frame card", () => {
   assert.match(filtersA, /\[0:a\].*\[aout\]/);
   assert.match(filtersB, /\[1:a\].*\[aout\]/);
   assert.ok(!filtersA.includes("concat=n=2"));
+});
+
+/** A stacked take-turns document carrying a caption band. */
+function bandDoc(
+  band: { text?: string; height?: number } = {},
+  layout: "top-bottom" | "top-bottom-turns" | "side-by-side" = "top-bottom-turns",
+): ReelDocument {
+  return reelDocumentSchema.parse({
+    layout,
+    gutter: 6,
+    captionBand: { text: "WHO DID IT BETTER?", height: 220, ...band },
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "video", sourceId: "b", start: 0, end: 4, slot: "b" },
+    ],
+  });
+}
+
+function bandClip(doc: ReelDocument, id: string): ClipInput {
+  return {
+    path: `/tmp/${id}.mp4`,
+    element: doc.elements.find(
+      (element) => element.type === "video" && element.sourceId === id,
+    ) as ClipInput["element"],
+    sourceDuration: 300,
+    hasAudio: true,
+  };
+}
+
+test("the caption band takes its height out of the panes, not off the top", () => {
+  const geometry = slotGeometry(bandDoc({ height: 220 }));
+  assert.ok(geometry);
+
+  // 1920 - 220 = 1700, halved and rounded down to even.
+  assert.equal(geometry.a.h, 850);
+  assert.equal(geometry.b.h, 850);
+  assert.equal(geometry.a.h % 2, 0);
+
+  const rect = captionBandRect(bandDoc({ height: 220 }));
+  assert.ok(rect);
+  assert.equal(rect.y, 850);
+  assert.equal(rect.width, 1080);
+  // The band fills the whole gap, including any pixel left by even-rounding.
+  assert.equal(rect.height, 1920 - 850 * 2);
+  assert.equal(rect.y + rect.height + geometry.b.h, 1920);
+
+  // An odd height still leaves even panes and a gap-filling band.
+  const odd = bandDoc({ height: 221 });
+  const oddGeometry = slotGeometry(odd);
+  const oddRect = captionBandRect(odd);
+  assert.ok(oddGeometry && oddRect);
+  assert.equal(oddGeometry.a.h % 2, 0);
+  assert.equal(oddRect.height, 1920 - oddGeometry.a.h - oddGeometry.b.h);
+});
+
+test("the band applies only where there is a gap between the panes", () => {
+  // Empty text and zero height both mean no band, and the panes fall back to
+  // the plain gutter.
+  assert.equal(captionBandRect(bandDoc({ text: "" })), null);
+  assert.equal(captionBandRect(bandDoc({ text: "   " })), null);
+  assert.equal(captionBandRect(bandDoc({ height: 0 })), null);
+  // (1920 - 6) / 2, rounded down to even.
+  assert.equal(slotGeometry(bandDoc({ text: "" }))!.a.h, 956);
+
+  // Side-by-side has no horizontal gap to put words in.
+  assert.equal(captionBandRect(bandDoc({}, "side-by-side")), null);
+  assert.equal(slotGeometry(bandDoc({}, "side-by-side"))!.a.w, 536);
+});
+
+test("both stacked phases composite the same band over the panes", () => {
+  const doc = bandDoc();
+  const rect = captionBandRect(doc);
+  assert.ok(rect);
+
+  const phases = ["a", "b"] as const;
+  for (const phase of phases) {
+    const graph = buildTurnsPhaseGraph(
+      doc,
+      bandClip(doc, "a"),
+      bandClip(doc, "b"),
+      phase,
+      "/tmp/band.png",
+    );
+    const filters = graph.args[graph.args.indexOf("-filter_complex") + 1];
+
+    // The band is the input after both clips, scaled to the gap it fills and
+    // laid over the finished panes.
+    assert.match(filters, new RegExp(`\\[2:v\\].*scale=1080:${rect.height}`));
+    assert.match(filters, new RegExp(`\\[panes\\]\\[band\\]overlay=0:${rect.y}`));
+    // Pane B still sits below the band, not under the old 6px gutter.
+    assert.match(filters, new RegExp(`overlay=0:${rect.y + rect.height}\\[panes\\]`));
+  }
+
+  // With no band rendered the panes go straight to the output, unchanged.
+  const plain = buildTurnsPhaseGraph(
+    doc,
+    bandClip(doc, "a"),
+    bandClip(doc, "b"),
+    "a",
+    null,
+  );
+  const plainFilters = plain.args[plain.args.indexOf("-filter_complex") + 1];
+  assert.ok(!plainFilters.includes("[band]"));
+  assert.match(plainFilters, /\[vb\]overlay=0:\d+\[vout\]/);
+});
+
+test("the band is on screen for every clip, and adds no time to the reel", () => {
+  const doc = bandDoc();
+  // A persistent band is document state, not a timeline element: the reel is
+  // still just the two clips back to back.
+  assert.equal(reelDuration(doc), 14);
+  assert.equal(doc.elements.filter((e) => e.type === "text").length, 0);
+
+  const graphA = buildTurnsPhaseGraph(
+    doc,
+    bandClip(doc, "a"),
+    bandClip(doc, "b"),
+    "a",
+    "/tmp/band.png",
+  );
+  const graphB = buildTurnsPhaseGraph(
+    doc,
+    bandClip(doc, "a"),
+    bandClip(doc, "b"),
+    "b",
+    "/tmp/band.png",
+  );
+  assert.equal(graphA.durationSeconds + graphB.durationSeconds, 14);
+});
+
+test("a band with no room for the panes is rejected", () => {
+  assert.throws(() =>
+    reelDocumentSchema.parse({
+      layout: "top-bottom",
+      format: { width: 1080, height: 600, fps: 30 },
+      captionBand: { text: "TOO BIG", height: 600 },
+      elements: [
+        { type: "video", sourceId: "a", start: 0, end: 5, slot: "a" },
+        { type: "video", sourceId: "b", start: 0, end: 5, slot: "b" },
+      ],
+    }),
+  );
+});
+
+test("a card or a pause does not blink the band off screen", () => {
+  const doc = reelDocumentSchema.parse({
+    layout: "top-bottom-turns",
+    gutter: 6,
+    captionBand: { text: "WHO DID IT BETTER?", height: 220 },
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "text", text: "BETWEEN", duration: 1.5 },
+      { type: "video", sourceId: "b", start: 0, end: 4, slot: "b" },
+    ],
+  });
+  const rect = captionBandRect(doc);
+  assert.ok(rect);
+  const card = doc.elements.find((element) => element.type === "text");
+  assert.ok(card && card.type === "text");
+
+  const carded = buildTextCardArgs(
+    doc,
+    card,
+    "/tmp/words.png",
+    "/tmp/card.mp4",
+    null,
+    "/tmp/band.png",
+  );
+  const cardFilters = carded[carded.indexOf("-filter_complex") + 1];
+
+  // The band goes on after the words, so it is never covered by them.
+  assert.match(cardFilters, /\[txt\]overlay=0:0:format=auto\[carded\]/);
+  assert.match(
+    cardFilters,
+    new RegExp(`\\[carded\\]\\[band\\]overlay=0:${rect.y}:format=auto\\[banded\\]`),
+  );
+  assert.deepEqual(
+    carded.slice(carded.indexOf("-map"), carded.indexOf("-map") + 2),
+    ["-map", "[banded]"],
+  );
+
+  const paused = buildPauseArgs(doc, 1, "black", null, "/tmp/pause.mp4", "/tmp/band.png");
+  const pauseFilters = paused[paused.indexOf("-filter_complex") + 1];
+  assert.match(
+    pauseFilters,
+    new RegExp(`\\[still\\]\\[band\\]overlay=0:${rect.y}`),
+  );
+
+  // Silence keeps its index whether or not a band input follows it, or the
+  // segment would be mapped to the band's video stream.
+  for (const [args, inputs] of [
+    // background, words, silence, band.
+    [carded, 4],
+    // background, silence, band — a pause has no words.
+    [paused, 3],
+  ] as const) {
+    const audioMap = args[args.lastIndexOf("-map") + 1];
+    assert.match(audioMap, /^\d+:a$/);
+    assert.equal(args.filter((arg) => arg === "-i").length, inputs);
+    // Silence is the input before the band, never the last one.
+    assert.equal(audioMap, `${inputs - 2}:a`);
+  }
+});
+
+test("without a band, cards and pauses are built exactly as before", () => {
+  const plain = reelDocumentSchema.parse({
+    layout: "sequential",
+    elements: [
+      { type: "video", sourceId: "a", start: 0, end: 10, slot: "a" },
+      { type: "text", text: "BETWEEN", duration: 1.5 },
+    ],
+  });
+  const card = plain.elements.find((element) => element.type === "text");
+  assert.ok(card && card.type === "text");
+
+  const args = buildTextCardArgs(plain, card, "/tmp/words.png", "/tmp/card.mp4");
+  const filters = args[args.indexOf("-filter_complex") + 1];
+  assert.ok(!filters.includes("[band]"));
+  assert.match(filters, /\[carded\]/);
+  assert.equal(args[args.indexOf("-map") + 1], "[carded]");
+
+  // A card with no overlay still holds its place as a plain coloured frame.
+  const bare = buildTextCardArgs(plain, card, null, "/tmp/card.mp4");
+  const bareFilters = bare[bare.indexOf("-filter_complex") + 1];
+  assert.ok(!bareFilters.includes("[txt]"));
+  assert.equal(bare[bare.indexOf("-map") + 1], "[bg]");
+  assert.match(bare.join(" "), /color=c=0x000000/);
 });
 
 test("blurred text cards use a video frame as their backdrop", () => {

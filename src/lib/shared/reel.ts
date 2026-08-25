@@ -36,6 +36,14 @@ export function isSplitLayout(layout: Layout): boolean {
 }
 
 /**
+ * Layouts that stack their panes vertically, and so have a horizontal gap
+ * between them that a caption band can occupy.
+ */
+export function isStackedLayout(layout: Layout): boolean {
+  return layout === "top-bottom" || layout === "top-bottom-turns";
+}
+
+/**
  * How a source frame is fitted into its slot when the aspect ratios differ.
  * "contain" letterboxes and never crops; "cover" fills the slot and crops the
  * overflow. Both preserve the source aspect ratio — we never stretch.
@@ -90,6 +98,25 @@ export const textElementSchema = z.object({
   backgroundStyle: textBackgroundStyleSchema.default("solid"),
 });
 
+/**
+ * A caption that lives in the gap between the panes of a stacked layout and
+ * stays on screen for the whole reel.
+ *
+ * Unlike a text element this is not part of the timeline: it belongs to the
+ * document, applies to every clip, and never interrupts playback. Its height
+ * is taken out of the panes rather than overlaid on them, so no footage is
+ * ever hidden behind the words. An empty `text` or a zero `height` leaves the
+ * panes separated by the plain `gutter` instead.
+ */
+export const captionBandSchema = z.object({
+  text: z.string().max(200).default(""),
+  /** Band height in output pixels, subtracted from the two panes. */
+  height: z.number().int().min(0).max(600).default(220),
+  fontSize: z.number().int().min(24).max(160).default(64),
+  color: hexColor.default("#ffffff"),
+  background: hexColor.default("#000000"),
+});
+
 export const elementSchema = z.discriminatedUnion("type", [
   videoElementSchema,
   pauseElementSchema,
@@ -110,6 +137,11 @@ export const reelDocumentSchema = z
      * Zero means the panes touch.
      */
     gutter: z.number().int().min(0).max(80).default(0),
+    /**
+     * The persistent caption between the panes. Ignored by layouts that have
+     * no horizontal gap to put it in.
+     */
+    captionBand: captionBandSchema.default({}),
     backgroundColor: hexColor.default("#000000"),
   })
   .superRefine((doc, ctx) => {
@@ -131,6 +163,20 @@ export const reelDocumentSchema = z
           path: ["elements", index, "end"],
         });
       }
+    }
+
+    // A band taller than the frame it divides would leave no panes at all.
+    // The schema's own ceiling makes this unreachable at 1080x1920, but the
+    // format is configurable and the geometry has to stay sane at any size.
+    if (
+      isStackedLayout(doc.layout) &&
+      doc.captionBand.height >= doc.format.height - 200
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The caption band leaves no room for the video panes.",
+        path: ["captionBand", "height"],
+      });
     }
 
     // The split layouts composite exactly one clip per pane. More than one
@@ -158,6 +204,7 @@ export type VideoElement = z.infer<typeof videoElementSchema>;
 export type PauseElement = z.infer<typeof pauseElementSchema>;
 export type TextElement = z.infer<typeof textElementSchema>;
 export type TextBackgroundStyle = z.infer<typeof textBackgroundStyleSchema>;
+export type CaptionBand = z.infer<typeof captionBandSchema>;
 export type ReelElement = z.infer<typeof elementSchema>;
 export type ReelDocument = z.infer<typeof reelDocumentSchema>;
 
@@ -167,6 +214,31 @@ export type ReelDocument = z.infer<typeof reelDocumentSchema>;
  */
 export type ReelDocumentInput = z.input<typeof reelDocumentSchema>;
 export type ReelElementInput = z.input<typeof elementSchema>;
+
+/**
+ * Whether the caption band is actually drawn.
+ *
+ * The band needs both words and room, and a gap to sit in: side-by-side puts
+ * its panes shoulder to shoulder and sequential shows one clip at a time, so
+ * neither has a "between" for it to occupy.
+ */
+export function hasCaptionBand(doc: ReelDocument): boolean {
+  return (
+    isStackedLayout(doc.layout) &&
+    doc.captionBand.text.trim() !== "" &&
+    doc.captionBand.height > 0
+  );
+}
+
+/**
+ * Space between the two panes, in output pixels.
+ *
+ * The band replaces the gutter rather than adding to it: it already separates
+ * the panes, so keeping both would leave a seam above and below the words.
+ */
+export function paneGap(doc: ReelDocument): number {
+  return hasCaptionBand(doc) ? doc.captionBand.height : doc.gutter;
+}
 
 /**
  * Total duration of the finished reel in seconds.

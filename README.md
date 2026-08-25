@@ -33,10 +33,33 @@ fit their slot, never stretched.
 |---|---|
 | **Sequential** | A plays, then B. Optional pause and text card between them. |
 | **Top / Bottom** | Both clips play at once, stacked vertically. |
+| **Take Turns** | Both panes stay on screen; the clips play one after the other. |
 | **Side by Side** | Both clips play at once, side by side. |
 
 In the split layouts, the shorter clip freezes on its last frame so the pane
 never goes blank mid-comparison.
+
+### Text
+
+Text comes in two forms, and they are not alternatives — a reel can use both.
+
+| | Text card | Caption band |
+|---|---|---|
+| Where | Full frame, between clips | The gap between the two panes |
+| When | For its own duration | The whole reel, cards included |
+| Layouts | All | Top / Bottom and Take Turns |
+| Cost | Adds its duration to the reel | Takes its height out of both panes |
+
+The band's height is adjustable, and one caption applies to the whole reel
+rather than to a single clip. Because the height comes out of the panes rather
+than sitting over them, nothing is ever hidden behind the words: a 1920px
+frame with a 220px band leaves each pane 850px.
+
+A text card does not interrupt the band. The card's background and words are
+composited first and the band goes on last, so the band holds its strip for
+the card's whole duration — and the card lays its words out in the region
+beside the band rather than underneath it. A card positioned at the bottom
+takes the space below the band; anything else takes the space above.
 
 ---
 
@@ -129,7 +152,7 @@ src/
 │   ├── media/       Media providers (YouTube, upload) behind one interface
 │   ├── renderer/    FFmpeg filter graphs, pipeline, RenderWorker
 │   └── queue/       Job claiming, retries, crash recovery
-├── remotion/        Text card compositions
+├── remotion/        Text card and caption band compositions
 └── worker/          Worker process entry point
 ```
 
@@ -139,12 +162,14 @@ src/
 screen-capturing headless Chrome, which is far slower than FFmpeg for plain
 cuts. It earns its place only for text, where it gives real typography and
 automatic wrapping. Text cards are rendered to transparent PNGs and composited
-by FFmpeg.
+by FFmpeg; the caption band is rendered the same way, once per reel, as a strip
+sized to the exact gap between the panes.
 
 > On the stock Homebrew FFmpeg for macOS, `drawtext` (needs libfreetype) and the
 > SVG decoder (needs librsvg) are both absent. Remotion is therefore the only
 > working text path. If Remotion fails, the reel still renders — the text card
-> becomes a plain coloured frame rather than failing the whole job.
+> becomes a plain coloured frame rather than failing the whole job, and the
+> caption band becomes an empty strip.
 
 **Sources are downloaded whole, not in sections.** `yt-dlp --download-sections`
 re-bases timestamps to zero and would need re-fetching every time a selection

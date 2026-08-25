@@ -1,6 +1,12 @@
 "use client";
 
-import type { EditorState, TextCard, TextSlot } from "../Editor";
+import { isStackedLayout, OUTPUT_HEIGHT } from "@/lib/shared/reel";
+import type {
+  CaptionBandSettings,
+  EditorState,
+  TextCard,
+  TextSlot,
+} from "../Editor";
 
 const PAUSE_OPTIONS = [
   { value: 0, label: "None" },
@@ -13,6 +19,17 @@ const SIZE_OPTIONS = [
   { value: 64, label: "Small" },
   { value: 84, label: "Medium" },
   { value: 112, label: "Large" },
+];
+
+/**
+ * Band type sizes. Smaller than a card's: the band is a strip a few hundred
+ * pixels tall, so a card-sized 84px would wrap the moment a caption ran past
+ * a couple of words.
+ */
+const BAND_SIZE_OPTIONS = [
+  { value: 48, label: "Small" },
+  { value: 64, label: "Medium" },
+  { value: 84, label: "Large" },
 ];
 
 const POSITION_OPTIONS = [
@@ -65,8 +82,20 @@ export function TextPanel({
     });
   };
 
+  const bandInUse =
+    isStackedLayout(state.layout) && state.captionBand.text.trim() !== "";
+
   return (
     <div className="space-y-4">
+      {isStackedLayout(state.layout) && (
+        <CaptionBandEditor
+          band={state.captionBand}
+          onChange={(patch) =>
+            onChange({ captionBand: { ...state.captionBand, ...patch } })
+          }
+        />
+      )}
+
       {state.layout === "sequential" && (
         <div>
           <p className="section-label mb-1.5">Pause between clips</p>
@@ -90,6 +119,17 @@ export function TextPanel({
           <p className="hint mt-0.5">
             Optional. Leave a field empty to skip that card.
           </p>
+          {/*
+            The band does not blink off for a card, so a card's words are laid
+            out around it. Worth saying here rather than leaving the user to
+            wonder why centred text sits high.
+          */}
+          {bandInUse && (
+            <p className="hint mt-0.5">
+              The band stays up through a card, so card text sits above it —
+              or below, if you position it at the bottom.
+            </p>
+          )}
         </div>
 
         {SLOTS.map((entry) => (
@@ -103,6 +143,89 @@ export function TextPanel({
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The band between the panes: one caption, on screen for the whole reel.
+ *
+ * Its height is a real trade rather than a cosmetic one — the pixels come out
+ * of the two video panes — so the control reports both sides of it: the band's
+ * height and what each pane is left with.
+ */
+function CaptionBandEditor({
+  band,
+  onChange,
+}: {
+  band: CaptionBandSettings;
+  onChange: (patch: Partial<CaptionBandSettings>) => void;
+}) {
+  const hasText = band.text.trim() !== "";
+  // Mirrors the renderer's geometry: the band's height is split out of the
+  // frame and the rest is halved between the panes.
+  const paneHeight = Math.floor((OUTPUT_HEIGHT - band.height) / 2);
+
+  return (
+    <div className="surface-inset p-2.5">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <span className="text-[12px] font-medium text-ink-200">
+          Caption band
+        </span>
+        <span className="text-[11px] text-ink-500">Between the panes</span>
+      </div>
+
+      <input
+        type="text"
+        value={band.text}
+        onChange={(event) => onChange({ text: event.target.value })}
+        placeholder="Who did it better?"
+        maxLength={200}
+        className="field"
+        aria-label="Caption band text"
+      />
+
+      <p className="hint mt-1.5">
+        Stays on screen for the whole reel, over both clips.
+      </p>
+
+      {hasText && (
+        <div className="mt-2.5 space-y-2.5 border-t border-ink-800 pt-2.5">
+          <Control label="Size">
+            {BAND_SIZE_OPTIONS.map((option) => (
+              <Chip
+                key={option.value}
+                selected={band.size === option.value}
+                onClick={() => onChange({ size: option.value })}
+              >
+                {option.label}
+              </Chip>
+            ))}
+          </Control>
+
+          <label className="block">
+            <span className="mb-1 flex items-baseline justify-between text-[11px] text-ink-400">
+              Height
+              <span className="metric">{band.height}px</span>
+            </span>
+            <input
+              type="range"
+              min={80}
+              max={480}
+              step={20}
+              value={band.height}
+              onChange={(event) =>
+                onChange({ height: Number(event.target.value) })
+              }
+              className="w-full accent-accent"
+              aria-label="Caption band height in pixels"
+            />
+            <span className="mt-1 block text-[11px] text-ink-500">
+              Each video pane gets {paneHeight}px of the {OUTPUT_HEIGHT}px frame.
+            </span>
+          </label>
+        </div>
+      )}
     </div>
   );
 }
