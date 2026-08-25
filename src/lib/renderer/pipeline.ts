@@ -17,10 +17,11 @@ import {
   buildSplitGraph,
   buildTextCardArgs,
   buildTurnsPhaseGraph,
+  captionBandRect,
   encoderArgs,
   type ClipInput,
 } from "./filtergraph";
-import { renderTextCard } from "./textcard";
+import { renderCaptionBand, renderTextCard } from "./textcard";
 
 export interface PipelineSource {
   /** Element sourceId this file satisfies. */
@@ -56,10 +57,16 @@ export async function renderReel(options: PipelineOptions): Promise<void> {
 
   if (document.layout === "sequential") {
     await renderSequential(options, clips);
-  } else if (document.layout === "top-bottom-turns") {
-    await renderTurns(options, clips);
   } else {
-    await renderSplit(options, clips);
+    // The band belongs to the document, not to any one clip, so it is drawn
+    // once and reused by every pass that composites panes.
+    const bandPath = await renderBandOverlay(document, workDir);
+
+    if (document.layout === "top-bottom-turns") {
+      await renderTurns(options, clips, bandPath);
+    } else {
+      await renderSplit(options, clips, bandPath);
+    }
   }
 
   // A render that produced nothing playable is a failure even if FFmpeg
@@ -108,6 +115,35 @@ async function resolveClips(
   }
 
   return clips;
+}
+
+/**
+ * Renders the persistent caption band to a PNG, or null when the document has
+ * none — or when Remotion could not draw it.
+ *
+ * A failure is not fatal, for the same reason a failed text card is not: the
+ * panes have already given up the band's height to the layout, so the reel
+ * still completes with a plain strip where the words would have been. A reel
+ * missing its caption beats no reel at all.
+ */
+async function renderBandOverlay(
+  document: ReelDocument,
+  workDir: string,
+): Promise<string | null> {
+  const rect = captionBandRect(document);
+  if (!rect) return null;
+
+  try {
+    const bandPath = path.join(workDir, "caption-band.png");
+    await renderCaptionBand(document.captionBand, rect, bandPath);
+    return bandPath;
+  } catch (error) {
+    console.error(
+      `[pipeline] Caption band could not be rendered; the reel will show an ` +
+        `empty strip between the panes instead. Cause: ${(error as Error).message}`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -258,6 +294,7 @@ async function renderSequential(
 async function renderTurns(
   options: PipelineOptions,
   clips: Map<VideoElement, ClipInput>,
+  bandPath: string | null,
 ): Promise<void> {
   const { document, workDir, outputPath, signal } = options;
   const videos = document.elements.filter(
@@ -276,6 +313,9 @@ async function renderTurns(
   let completedDuration = 0;
   let lastFramePath: string | null = null;
   const openingFramePath = await extractOpeningFrame(document, clips, workDir);
+  // Null whenever the band failed to render, which keeps the cards laid out
+  // for the frame they will actually be composited into.
+  const bandRect = bandPath === null ? null : captionBandRect(document);
 
   for (const [index, element] of document.elements.entries()) {
     if (signal?.aborted) throw new AppError("CANCELLED", "Cancelled during segments");
@@ -289,6 +329,7 @@ async function renderTurns(
         clipA,
         clipB,
         element.slot,
+        bandPath,
       );
       const base = completedDuration;
       segmentDuration = graph.durationSeconds;
@@ -308,6 +349,11 @@ async function renderTurns(
           (clipB.element.end - clipB.element.start).toFixed(3),
           "-i",
           clipB.path,
+          // The band is a still, so it is looped for the phase's length. It
+          // must follow both clips: the graph addresses it as input 2.
+          ...(bandPath
+            ? ["-loop", "1", "-t", segmentDuration.toFixed(3), "-i", bandPath]
+            : []),
           ...graph.args,
           ...encoder,
           segmentPath,
@@ -332,7 +378,13 @@ async function renderTurns(
         lastFramePath = null;
       }
     } else if (element.type === "text") {
-      const overlayPath = await renderTextOverlay(element, document, workDir, index);
+      const overlayPath = await renderTextOverlay(
+        element,
+        document,
+        workDir,
+        index,
+        bandRect,
+      );
       segmentDuration = element.duration;
       await runFfmpeg(
         [
@@ -343,6 +395,7 @@ async function renderTurns(
             overlayPath,
             segmentPath,
             lastFramePath ?? openingFramePath,
+            bandPath,
           ).slice(0, -1),
           ...encoder,
           segmentPath,
@@ -355,7 +408,14 @@ async function renderTurns(
       await runFfmpeg(
         [
           "-y",
-          ...buildPauseArgs(document, element.duration, "black", null, segmentPath).slice(0, -1),
+          ...buildPauseArgs(
+            document,
+            element.duration,
+            "black",
+            null,
+            segmentPath,
+            bandPath,
+          ).slice(0, -1),
           ...encoder,
           segmentPath,
         ],
@@ -422,6 +482,7 @@ async function concatSegments(
 async function renderSplit(
   options: PipelineOptions,
   clips: Map<VideoElement, ClipInput>,
+  bandPath: string | null,
 ): Promise<void> {
   const { document, workDir, outputPath, signal } = options;
 
@@ -439,7 +500,7 @@ async function renderSplit(
   if (!clipA || !clipB) throw new AppError("RENDER_FAILED", "Split layout clips unresolved");
 
   // The remaining split layouts both composite two panes concurrently.
-  const graph = buildSplitGraph(document, clipA, clipB);
+  const graph = buildSplitGraph(document, clipA, clipB, bandPath);
   const encoder = encoderArgs(config.render.encoder, config.render.quality);
 
   const compositePath = path.join(workDir, "composite.mp4");
@@ -453,6 +514,10 @@ async function renderSplit(
       "-ss", clipB.element.start.toFixed(3),
       "-t", (clipB.element.end - clipB.element.start).toFixed(3),
       "-i", clipB.path,
+      // Looped still, after both clips: the graph addresses it as input 2.
+      ...(bandPath
+        ? ["-loop", "1", "-t", graph.durationSeconds.toFixed(3), "-i", bandPath]
+        : []),
       ...graph.args,
       ...encoder,
       compositePath,
@@ -510,12 +575,19 @@ async function renderSplit(
     }
   }
 
+  const bandRect = bandPath === null ? null : captionBandRect(document);
   const segments: string[] = [];
   for (const { element, index } of extras) {
     const segmentPath = path.join(workDir, `extra-${index}.mp4`);
 
     if (element.type === "text") {
-      const overlayPath = await renderTextOverlay(element, document, workDir, index);
+      const overlayPath = await renderTextOverlay(
+        element,
+        document,
+        workDir,
+        index,
+        bandRect,
+      );
       const backgroundFramePath =
         index < firstVideoIndex ? firstCompositeFrame : lastCompositeFrame;
       await runFfmpeg(
@@ -525,6 +597,7 @@ async function renderSplit(
           overlayPath,
           segmentPath,
           backgroundFramePath,
+          bandPath,
         ).slice(0, -1),
           ...encoder, segmentPath],
         { signal },
@@ -532,7 +605,14 @@ async function renderSplit(
     } else {
       if (element.duration <= 0) continue;
       await runFfmpeg(
-        ["-y", ...buildPauseArgs(document, element.duration, "black", null, segmentPath).slice(0, -1),
+        ["-y", ...buildPauseArgs(
+          document,
+          element.duration,
+          "black",
+          null,
+          segmentPath,
+          bandPath,
+        ).slice(0, -1),
           ...encoder, segmentPath],
         { signal },
       );
@@ -575,10 +655,12 @@ async function renderTextOverlay(
   document: ReelDocument,
   workDir: string,
   index: number,
+  /** Set on the stacked layouts, where the band stays up through the card. */
+  band: { y: number; height: number } | null = null,
 ): Promise<string | null> {
   try {
     const overlayPath = path.join(workDir, `text-${index}.png`);
-    await renderTextCard(element, document.format, overlayPath);
+    await renderTextCard(element, document.format, overlayPath, band);
     return overlayPath;
   } catch (error) {
     console.error(

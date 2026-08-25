@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { Format, TextElement } from "../shared/reel";
+import type { CaptionBand, Format, TextElement } from "../shared/reel";
 
 /**
  * Renders a text card to a transparent PNG using Remotion.
@@ -37,6 +37,11 @@ export async function renderTextCard(
   element: TextElement,
   format: Format,
   outputPath: string,
+  /**
+   * The caption band's strip, when the reel has one, so the card can lay its
+   * words out beside the band instead of underneath it.
+   */
+  band: { y: number; height: number } | null = null,
 ): Promise<void> {
   const { selectComposition, renderStill } = await import("@remotion/renderer");
   const serveUrl = await getBundle();
@@ -48,6 +53,8 @@ export async function renderTextCard(
     align: element.align,
     color: element.color,
     background: element.background,
+    bandTop: band?.y ?? 0,
+    bandHeight: band?.height ?? 0,
   };
 
   const composition = await selectComposition({
@@ -66,6 +73,48 @@ export async function renderTextCard(
     output: outputPath,
     inputProps,
     // Transparency is the whole point: FFmpeg supplies the background.
+    imageFormat: "png",
+  });
+}
+
+/**
+ * Renders the persistent caption band to a PNG strip.
+ *
+ * Sized to the exact gap left between the panes rather than the full frame:
+ * the band is overlaid at a fixed offset, so rendering it any larger would
+ * mean scaling artwork that was laid out for a different box. Opaque, unlike a
+ * text card — the band paints its own background.
+ */
+export async function renderCaptionBand(
+  band: CaptionBand,
+  rect: { width: number; height: number },
+  outputPath: string,
+): Promise<void> {
+  const { selectComposition, renderStill } = await import("@remotion/renderer");
+  const serveUrl = await getBundle();
+
+  const inputProps = {
+    text: band.text,
+    fontSize: band.fontSize,
+    color: band.color,
+    background: band.background,
+  };
+
+  const composition = await selectComposition({
+    serveUrl,
+    id: "CaptionBand",
+    inputProps,
+  });
+
+  await renderStill({
+    composition: {
+      ...composition,
+      width: rect.width,
+      height: rect.height,
+    },
+    serveUrl,
+    output: outputPath,
+    inputProps,
     imageFormat: "png",
   });
 }

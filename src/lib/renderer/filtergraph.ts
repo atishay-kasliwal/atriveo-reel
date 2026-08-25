@@ -1,8 +1,10 @@
-import type {
-  FitMode,
-  ReelDocument,
-  TextElement,
-  VideoElement,
+import {
+  hasCaptionBand,
+  paneGap,
+  type FitMode,
+  type ReelDocument,
+  type TextElement,
+  type VideoElement,
 } from "../shared/reel";
 
 /**
@@ -64,7 +66,9 @@ export function slotGeometry(
   doc: ReelDocument,
 ): { a: { w: number; h: number }; b: { w: number; h: number } } | null {
   const { width, height } = doc.format;
-  const gutter = doc.gutter;
+  // The caption band widens the gap when it is in use, so the panes give up
+  // exactly the space it occupies.
+  const gutter = paneGap(doc);
 
   if (doc.layout === "top-bottom" || doc.layout === "top-bottom-turns") {
     // Split the gutter out of the total height, then halve. Rounding to even
@@ -87,6 +91,57 @@ function evenDown(value: number): number {
 }
 
 /**
+ * Where the caption band sits in the output frame, or null when there is no
+ * band to draw.
+ *
+ * The height is measured as the leftover between the two panes rather than
+ * read from the document: rounding pane heights down to even numbers can
+ * leave the gap a pixel taller than requested, and the band has to fill it
+ * exactly or a hairline of background shows through.
+ */
+export function captionBandRect(
+  doc: ReelDocument,
+): { y: number; width: number; height: number } | null {
+  if (!hasCaptionBand(doc)) return null;
+
+  const geometry = slotGeometry(doc);
+  if (!geometry) return null;
+
+  const height = doc.format.height - geometry.a.h - geometry.b.h;
+  if (height <= 0) return null;
+
+  return { y: geometry.a.h, width: doc.format.width, height };
+}
+
+/**
+ * The steps that lay the caption band over a finished pane composite.
+ *
+ * `paneLabel` is where the panes should be written: straight to `[vout]` when
+ * there is no band, so every caller emits the same shape whether or not one
+ * is in play. The band arrives as a pre-rendered PNG on `bandInputIndex`,
+ * which callers supply as the input after the two clips.
+ */
+function captionBandOverlay(
+  doc: ReelDocument,
+  bandPath: string | null,
+  bandInputIndex: number,
+): { paneLabel: string; filters: string[] } {
+  const rect = bandPath === null ? null : captionBandRect(doc);
+  if (!rect) return { paneLabel: "[vout]", filters: [] };
+
+  return {
+    paneLabel: "[panes]",
+    filters: [
+      `[${bandInputIndex}:v]fps=${doc.format.fps},` +
+        `scale=${rect.width}:${rect.height},setsar=1[band]`,
+      // format=auto keeps the band's alpha, so rounded or padded artwork
+      // composites rather than punching a hole in the frame.
+      `[panes][band]overlay=0:${rect.y}:format=auto[vout]`,
+    ],
+  };
+}
+
+/**
  * Builds the graph for a split layout, where both clips play simultaneously.
  *
  * The panes are stacked onto a background canvas rather than with hstack/vstack
@@ -97,6 +152,8 @@ export function buildSplitGraph(
   doc: ReelDocument,
   clipA: ClipInput,
   clipB: ClipInput,
+  /** Pre-rendered caption band PNG, supplied as the input after both clips. */
+  bandPath: string | null = null,
 ): GraphResult {
   const geometry = slotGeometry(doc);
   if (!geometry) throw new Error(`buildSplitGraph called for layout: ${doc.layout}`);
@@ -138,12 +195,15 @@ export function buildSplitGraph(
 
   const isVertical =
     doc.layout === "top-bottom" || doc.layout === "top-bottom-turns";
+  const gap = paneGap(doc);
   const offsetB = isVertical
-    ? `0:${geometry.a.h + doc.gutter}`
-    : `${geometry.a.w + doc.gutter}:0`;
+    ? `0:${geometry.a.h + gap}`
+    : `${geometry.a.w + gap}:0`;
+  const band = captionBandOverlay(doc, bandPath, 2);
 
   filters.push(`[canvas][va]overlay=0:0:shortest=0[stage1]`);
-  filters.push(`[stage1][vb]overlay=${offsetB}[vout]`);
+  filters.push(`[stage1][vb]overlay=${offsetB}${band.paneLabel}`);
+  filters.push(...band.filters);
 
   const audioFilters = buildSplitAudio([clipA, clipB], duration);
   filters.push(...audioFilters.filters);
@@ -182,6 +242,7 @@ export function buildTurnsGraph(
   doc: ReelDocument,
   clipA: ClipInput,
   clipB: ClipInput,
+  bandPath: string | null = null,
 ): GraphResult {
   const geometry = slotGeometry(doc);
   if (!geometry) throw new Error(`buildTurnsGraph called for layout: ${doc.layout}`);
@@ -213,9 +274,11 @@ export function buildTurnsGraph(
       `setpts=PTS-STARTPTS[vb]`,
   );
 
-  const offsetB = `0:${geometry.a.h + doc.gutter}`;
+  const offsetB = `0:${geometry.a.h + paneGap(doc)}`;
+  const band = captionBandOverlay(doc, bandPath, 2);
   filters.push(`[canvas][va]overlay=0:0:shortest=0[stage1]`);
-  filters.push(`[stage1][vb]overlay=${offsetB}[vout]`);
+  filters.push(`[stage1][vb]overlay=${offsetB}${band.paneLabel}`);
+  filters.push(...band.filters);
 
   const audio = buildTurnsAudio(clipA, clipB, durationA, durationB);
   filters.push(...audio.filters);
@@ -247,6 +310,7 @@ export function buildTurnsPhaseGraph(
   clipA: ClipInput,
   clipB: ClipInput,
   phase: TurnsPhase,
+  bandPath: string | null = null,
 ): GraphResult {
   const geometry = slotGeometry(doc);
   if (!geometry) {
@@ -290,9 +354,11 @@ export function buildTurnsPhaseGraph(
       `v${phase === "a" ? "b" : "a"}]`,
   );
 
-  const offsetB = `0:${geometry.a.h + doc.gutter}`;
+  const offsetB = `0:${geometry.a.h + paneGap(doc)}`;
+  const band = captionBandOverlay(doc, bandPath, 2);
   filters.push(`[canvas][va]overlay=0:0:shortest=0[stage1]`);
-  filters.push(`[stage1][vb]overlay=${offsetB}[vout]`);
+  filters.push(`[stage1][vb]overlay=${offsetB}${band.paneLabel}`);
+  filters.push(...band.filters);
 
   const audio = buildTurnsPhaseAudio(active, activeIndex, duration);
   filters.push(...audio.filters);
@@ -474,6 +540,56 @@ export function buildSegmentArgs(
   return { args, durationSeconds: duration };
 }
 
+/**
+ * Collects FFmpeg inputs while keeping track of the index each one lands on.
+ *
+ * The still-frame builders layer a variable set of inputs — a background, a
+ * text overlay, silence, a caption band — and every filter has to address its
+ * input by position. Handing out the index at the point the input is added is
+ * what stops that bookkeeping from drifting as layers come and go.
+ */
+function inputCollector(): {
+  args: string[];
+  add: (...args: string[]) => number;
+} {
+  const args: string[] = [];
+  let next = 0;
+  return {
+    args,
+    add: (...parts: string[]) => {
+      args.push(...parts);
+      return next++;
+    },
+  };
+}
+
+/**
+ * Overlays the caption band onto a still segment, so a card or a pause does
+ * not blink the band off screen for its duration.
+ *
+ * Returns the label the finished frame ends up on, which is the label it was
+ * given when there is no band to add.
+ */
+function overlayBandOnStill(
+  doc: ReelDocument,
+  filters: string[],
+  inputs: ReturnType<typeof inputCollector>,
+  label: string,
+  duration: string,
+  bandPath: string | null,
+): string {
+  const rect = bandPath === null ? null : captionBandRect(doc);
+  if (!rect) return label;
+
+  const index = inputs.add("-loop", "1", "-t", duration, "-i", bandPath!);
+  filters.push(
+    `[${index}:v]fps=${doc.format.fps},` +
+      `scale=${rect.width}:${rect.height},setsar=1[band]`,
+  );
+  filters.push(`${label}[band]overlay=0:${rect.y}:format=auto[banded]`);
+  return "[banded]";
+}
+
 /** A held frame or blank segment, matching segment geometry exactly. */
 export function buildPauseArgs(
   doc: ReelDocument,
@@ -481,35 +597,58 @@ export function buildPauseArgs(
   style: "freeze" | "black",
   previousFramePath: string | null,
   outputPath: string,
+  /** Pre-rendered caption band, so a pause does not interrupt it. */
+  bandPath: string | null = null,
 ): string[] {
   const { width, height, fps } = doc.format;
   const background = doc.backgroundColor.replace("#", "0x");
+  const seconds = duration.toFixed(3);
+
+  const inputs = inputCollector();
+  const filters: string[] = [];
 
   // A freeze needs a frame to hold; without one it degrades to black.
-  if (style === "freeze" && previousFramePath) {
-    return [
-      "-loop", "1",
-      "-t", duration.toFixed(3),
-      "-i", previousFramePath,
-      "-f", "lavfi",
-      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-      "-filter_complex",
-      `[0:v]fps=${fps},scale=${width}:${height},setsar=1,setpts=PTS-STARTPTS[v]`,
-      "-map", "[v]",
-      "-map", "1:a",
-      "-t", duration.toFixed(3),
-      outputPath,
-    ];
-  }
+  const freeze = style === "freeze" && previousFramePath !== null;
+  const backgroundIndex = freeze
+    ? inputs.add("-loop", "1", "-t", seconds, "-i", previousFramePath!)
+    : inputs.add(
+        "-f",
+        "lavfi",
+        "-i",
+        `color=c=${background}:s=${width}x${height}:r=${fps}:d=${seconds}`,
+      );
+
+  filters.push(
+    freeze
+      ? `[${backgroundIndex}:v]fps=${fps},scale=${width}:${height},setsar=1,` +
+          `setpts=PTS-STARTPTS[still]`
+      : `[${backgroundIndex}:v]setpts=PTS-STARTPTS[still]`,
+  );
+
+  // Silence is registered before the band so its index never moves when the
+  // band comes and goes.
+  const silenceIndex = inputs.add(
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=channel_layout=stereo:sample_rate=48000",
+  );
+
+  const label = overlayBandOnStill(
+    doc,
+    filters,
+    inputs,
+    "[still]",
+    seconds,
+    bandPath,
+  );
 
   return [
-    "-f", "lavfi",
-    "-i", `color=c=${background}:s=${width}x${height}:r=${fps}:d=${duration.toFixed(3)}`,
-    "-f", "lavfi",
-    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-    "-map", "0:v",
-    "-map", "1:a",
-    "-t", duration.toFixed(3),
+    ...inputs.args,
+    "-filter_complex", filters.join(";"),
+    "-map", label,
+    "-map", `${silenceIndex}:a`,
+    "-t", seconds,
     outputPath,
   ];
 }
@@ -523,6 +662,11 @@ export function buildPauseArgs(
  * When no overlay is available the card still renders, as a plain coloured
  * frame holding its place in the timeline, so the reel completes without text
  * rather than failing.
+ *
+ * The frame is built in layers — background, then words, then the caption
+ * band — so a card interrupts the clips without interrupting the band. The
+ * band goes on last: it owns its strip outright, and the card's words are laid
+ * out to keep clear of it rather than to be covered by it.
  */
 export function buildTextCardArgs(
   doc: ReelDocument,
@@ -531,80 +675,62 @@ export function buildTextCardArgs(
   outputPath: string,
   /** A rendered frame from the relevant video, when blur was requested. */
   backgroundFramePath: string | null = null,
+  /** Pre-rendered caption band, so a card does not interrupt it. */
+  bandPath: string | null = null,
 ): string[] {
   const { width, height, fps } = doc.format;
   const background = element.background.replace("#", "0x");
-  const duration = element.duration;
+  const seconds = element.duration.toFixed(3);
 
-  if (element.backgroundStyle === "blur" && backgroundFramePath) {
-    const framePath = backgroundFramePath;
-    const blurredBackground =
-      `[0:v]fps=${fps},${fitFilter(width, height, "cover", doc.backgroundColor)},` +
-      `boxblur=20:1,eq=brightness=-0.08:saturation=0.75,setpts=PTS-STARTPTS[bg]`;
+  const inputs = inputCollector();
+  const filters: string[] = [];
 
-    if (overlayPath) {
-      return [
-        "-loop", "1",
-        "-t", duration.toFixed(3),
-        "-i", framePath,
-        "-loop", "1",
-        "-t", duration.toFixed(3),
-        "-i", overlayPath,
-        "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-filter_complex",
-        `${blurredBackground};` +
-          `[1:v]fps=${fps},scale=${width}:${height},setsar=1[txt];` +
-          `[bg][txt]overlay=0:0:format=auto,setpts=PTS-STARTPTS[v]`,
-        "-map", "[v]",
-        "-map", "2:a",
-        "-t", duration.toFixed(3),
-        outputPath,
-      ];
-    }
+  // Background: a blurred frame from the surrounding video when one was asked
+  // for and could be extracted, otherwise the card's flat colour.
+  const blurred =
+    element.backgroundStyle === "blur" && backgroundFramePath !== null;
+  const backgroundIndex = blurred
+    ? inputs.add("-loop", "1", "-t", seconds, "-i", backgroundFramePath!)
+    : inputs.add(
+        "-f",
+        "lavfi",
+        "-i",
+        `color=c=${background}:s=${width}x${height}:r=${fps}:d=${seconds}`,
+      );
 
-    return [
-      "-loop", "1",
-      "-t", duration.toFixed(3),
-      "-i", framePath,
-      "-f", "lavfi",
-      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-      "-filter_complex", `${blurredBackground.replace("[bg]", "[v]")}`,
-      "-map", "[v]",
-      "-map", "1:a",
-      "-t", duration.toFixed(3),
-      outputPath,
-    ];
-  }
+  filters.push(
+    blurred
+      ? `[${backgroundIndex}:v]fps=${fps},` +
+          `${fitFilter(width, height, "cover", doc.backgroundColor)},` +
+          `boxblur=20:1,eq=brightness=-0.08:saturation=0.75,setpts=PTS-STARTPTS[bg]`
+      : `[${backgroundIndex}:v]setpts=PTS-STARTPTS[bg]`,
+  );
+
+  let label = "[bg]";
 
   if (overlayPath) {
-    return [
-      "-f", "lavfi",
-      "-i", `color=c=${background}:s=${width}x${height}:r=${fps}:d=${duration.toFixed(3)}`,
-      "-loop", "1",
-      "-t", duration.toFixed(3),
-      "-i", overlayPath,
-      "-f", "lavfi",
-      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-      "-filter_complex",
-      // format=auto preserves the overlay's alpha channel during compositing.
-      `[1:v]fps=${fps},scale=${width}:${height},setsar=1[txt];` +
-        `[0:v][txt]overlay=0:0:format=auto,setpts=PTS-STARTPTS[v]`,
-      "-map", "[v]",
-      "-map", "2:a",
-      "-t", duration.toFixed(3),
-      outputPath,
-    ];
+    const index = inputs.add("-loop", "1", "-t", seconds, "-i", overlayPath);
+    filters.push(`[${index}:v]fps=${fps},scale=${width}:${height},setsar=1[txt]`);
+    // format=auto preserves the overlay's alpha channel during compositing.
+    filters.push(`${label}[txt]overlay=0:0:format=auto[carded]`);
+    label = "[carded]";
   }
 
+  const silenceIndex = inputs.add(
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=channel_layout=stereo:sample_rate=48000",
+  );
+
+  label = overlayBandOnStill(doc, filters, inputs, label, seconds, bandPath);
+
   return [
-    "-f", "lavfi",
-    "-i", `color=c=${background}:s=${width}x${height}:r=${fps}:d=${duration.toFixed(3)}`,
-    "-f", "lavfi",
-    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-    "-map", "0:v",
-    "-map", "1:a",
-    "-t", duration.toFixed(3),
+    ...inputs.args,
+    "-filter_complex", filters.join(";"),
+    "-map", label,
+    "-map", `${silenceIndex}:a`,
+    "-t", seconds,
     outputPath,
   ];
 }

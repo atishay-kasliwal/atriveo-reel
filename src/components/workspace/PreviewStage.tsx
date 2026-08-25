@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   formatTimecode,
+  OUTPUT_HEIGHT,
   reelDuration,
   type ReelDocument,
 } from "@/lib/shared/reel";
@@ -358,6 +359,9 @@ function StackedStage({
   state: EditorState;
   takeTurns?: boolean;
 }) {
+  const band = state.captionBand;
+  const showBand = band.text.trim() !== "" && band.height > 0;
+
   return (
     <div className="flex h-full flex-col gap-[2px]">
       <Pane
@@ -365,6 +369,38 @@ function StackedStage({
         label="A"
         badge={takeTurns ? "plays first" : undefined}
       />
+
+      {/*
+        Sized as a share of the frame rather than in pixels, so the strip keeps
+        its true proportion at whatever width the preview column ends up.
+        `shrink-0` stops the panes' flex-1 from reclaiming it.
+      */}
+      {showBand && (
+        <div
+          className="flex shrink-0 items-center justify-center overflow-hidden
+                     bg-black px-3"
+          style={{
+            height: `${(band.height / OUTPUT_HEIGHT) * 100}%`,
+            // The band becomes its own query container so the caption can be
+            // sized against the strip's real height. Its height is set here
+            // and does not depend on the text, which is what `size` requires.
+            containerType: "size",
+          }}
+        >
+          <p
+            className="text-center font-bold leading-tight text-white"
+            style={{
+              // The output ratio of type size to band height, reproduced at
+              // preview scale: making the band taller or the type larger looks
+              // here like it will look in the render.
+              fontSize: `${(band.size / band.height) * 100}cqh`,
+            }}
+          >
+            {band.text}
+          </p>
+        </div>
+      )}
+
       <Pane
         source={state.sourceB}
         label="B"

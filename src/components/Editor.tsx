@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { api, ApiError } from "@/lib/api/client";
 import {
   formatTimecode,
+  isStackedLayout,
   reelDocumentSchema,
   type Layout,
   type ReelDocument,
@@ -49,6 +50,21 @@ export interface TextCard {
   backgroundStyle: TextBackgroundStyle;
 }
 
+/**
+ * The persistent caption between the panes. Unlike a text card this has no
+ * duration: it is on screen for every clip, for the whole reel.
+ */
+export interface CaptionBandSettings {
+  text: string;
+  /** Height in output pixels, taken out of the two panes. */
+  height: number;
+  size: number;
+}
+
+export function emptyCaptionBand(): CaptionBandSettings {
+  return { text: "", height: 220, size: 64 };
+}
+
 export function emptyTextCard(): TextCard {
   return {
     text: "",
@@ -69,6 +85,8 @@ export interface EditorState {
   pauseDuration: number;
   /** Text cards keyed by slot; each is independently optional. */
   texts: Record<TextSlot, TextCard>;
+  /** The always-on caption between the panes. Empty text means no band. */
+  captionBand: CaptionBandSettings;
 }
 
 const INITIAL_STATE: EditorState = {
@@ -87,6 +105,7 @@ const INITIAL_STATE: EditorState = {
     middle: emptyTextCard(),
     outro: emptyTextCard(),
   },
+  captionBand: emptyCaptionBand(),
 };
 
 /**
@@ -156,6 +175,13 @@ export function buildDocument(state: EditorState): ReelDocument {
     layout: state.layout,
     elements,
     gutter: state.layout === "sequential" ? 0 : 6,
+    // Sent whatever the layout: the document rules decide whether a band is
+    // drawn, so switching layouts never silently discards the caption.
+    captionBand: {
+      text: state.captionBand.text.trim(),
+      height: state.captionBand.height,
+      fontSize: state.captionBand.size,
+    },
   });
 }
 
@@ -552,6 +578,13 @@ function textSummary(state: EditorState): string {
     (slot) => state.texts[slot].text.trim() !== "",
   ).length;
   const pause = state.pauseDuration > 0 ? `, ${state.pauseDuration}s pause` : "";
-  if (used === 0) return `No text cards${pause}`;
-  return `${used} text card${used > 1 ? "s" : ""}${pause}`;
+  // The band only renders on the stacked layouts, so it is only summarised
+  // where it will actually be seen.
+  const band =
+    isStackedLayout(state.layout) && state.captionBand.text.trim() !== ""
+      ? `Band “${state.captionBand.text.trim()}”`
+      : null;
+  const cards =
+    used === 0 ? `No text cards` : `${used} text card${used > 1 ? "s" : ""}`;
+  return band ? `${band} · ${cards}${pause}` : `${cards}${pause}`;
 }
